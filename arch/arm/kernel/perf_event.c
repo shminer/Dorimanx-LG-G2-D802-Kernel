@@ -902,11 +902,13 @@ static int __cpuinit pmu_cpu_notify(struct notifier_block *b,
 						 hcpu, 1);
 	}
 
+
 	if (cpu_has_active_perf((int)hcpu)) {
 		switch ((action & ~CPU_TASKS_FROZEN)) {
 
 		case CPU_DOWN_PREPARE:
-		armpmu_update_counters();
+			armpmu_update_counters();
+
 			/*
 			 * If this is on a multicore CPU, we need
 			 * to disarm the PMU IRQ before disappearing.
@@ -947,7 +949,6 @@ static int __cpuinit pmu_cpu_notify(struct notifier_block *b,
 
 	return NOTIFY_OK;
 }
-
 
 static struct notifier_block __cpuinitdata pmu_cpu_notifier = {
 	.notifier_call = pmu_cpu_notify,
