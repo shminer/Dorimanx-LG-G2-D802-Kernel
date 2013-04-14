@@ -33,6 +33,7 @@
 
 /* User tunabble controls */
 #define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(10)
+#define DEF_GRAD_UP_THRESHOLD			(50)
 #define MICRO_FREQUENCY_DOWN_DIFFERENTIAL	(3)
 
 #define DEF_FREQUENCY_UP_THRESHOLD		(75)
@@ -104,6 +105,7 @@ struct cpu_dbs_info_s {
 	unsigned int max_load;
 	int cpu;
 	unsigned int sample_type:1;
+	unsigned int prev_load_freq;
 	/*
 	 * percpu mutex that serializes governor limit change with
 	 * do_dbs_timer invocation. We do not want do_dbs_timer to run
@@ -141,6 +143,7 @@ static struct dbs_tuners {
 	unsigned int up_threshold;
 	unsigned int adj_up_threshold;
 	unsigned int micro_freq_up_threshold;
+	unsigned int grad_up_threshold;
 	unsigned int ignore_nice;
 	unsigned int sampling_down_factor;
 	int          powersave_bias;
@@ -151,11 +154,12 @@ static struct dbs_tuners {
 	unsigned int high_grid_step;
 	unsigned int middle_grid_load;
 	unsigned int high_grid_load;
+	unsigned int early_demand;
 } dbs_tuners_ins = {
 	.up_threshold = DEF_FREQUENCY_UP_THRESHOLD,
 	.sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR,
 	.adj_up_threshold = DEF_FREQUENCY_UP_THRESHOLD -
-						DEF_FREQUENCY_DOWN_DIFFERENTIAL,
+				DEF_FREQUENCY_DOWN_DIFFERENTIAL,
 	.micro_freq_up_threshold = MICRO_FREQUENCY_UP_THRESHOLD,
 	.middle_grid_step = DEF_MIDDLE_GRID_STEP,
 	.high_grid_step = DEF_HIGH_GRID_STEP,
@@ -167,6 +171,8 @@ static struct dbs_tuners {
 	.input_boost = 0,
 	.io_is_busy = 0,
 	.sampling_rate = DEF_SAMPLING_RATE,
+	.grad_up_threshold = DEF_GRAD_UP_THRESHOLD,
+	.early_demand = 0,
 };
 
 #ifdef CONFIG_MACH_LGE
@@ -294,6 +300,8 @@ show_one(middle_grid_load, middle_grid_load);
 show_one(high_grid_load, high_grid_load);
 show_one(input_boost, input_boost);
 show_one(optimal_max_freq, optimal_max_freq);
+show_one(grad_up_threshold, grad_up_threshold);
+show_one(early_demand, early_demand);
 
 static ssize_t show_powersave_bias
 (struct kobject *kobj, struct attribute *attr, char *buf)
@@ -621,6 +629,36 @@ skip_this_cpu_bypass:
 	return count;
 }
 
+static ssize_t store_grad_up_threshold(struct kobject *a, struct attribute *b,
+					const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > MAX_FREQUENCY_UP_THRESHOLD ||
+		input < MIN_FREQUENCY_UP_THRESHOLD) {
+		return -EINVAL;
+	}
+
+	dbs_tuners_ins.grad_up_threshold = input;
+	return count;
+}
+
+static ssize_t store_early_demand(struct kobject *a, struct attribute *b,
+				const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+
+	dbs_tuners_ins.early_demand = !!input;
+	return count;
+}
+
 define_one_global_rw(sampling_rate);
 define_one_global_rw(io_is_busy);
 define_one_global_rw(up_threshold);
@@ -634,6 +672,8 @@ define_one_global_rw(middle_grid_step);
 define_one_global_rw(high_grid_step);
 define_one_global_rw(middle_grid_load);
 define_one_global_rw(high_grid_load);
+define_one_global_rw(grad_up_threshold);
+define_one_global_rw(early_demand);
 
 static struct attribute *dbs_attributes[] = {
 	&sampling_rate_min.attr,
@@ -650,6 +690,8 @@ static struct attribute *dbs_attributes[] = {
 	&high_grid_step.attr,
 	&middle_grid_load.attr,
 	&high_grid_load.attr,
+	&grad_up_threshold.attr,
+	&early_demand.attr,
 	NULL
 };
 
@@ -678,6 +720,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	unsigned int max_load_freq;
 	/* Current load across this CPU */
 	unsigned int cur_load = 0;
+	int boost_freq = 0;
 
 	unsigned int sampling_rate;
 	struct cpufreq_policy *policy;
@@ -808,6 +851,20 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	cpufreq_notify_utilization(policy, cur_load);
 
+	/*
+	 * Calculate the gradient of load_freq. If it is too steep we assume
+	 * that the load will go over up_threshold in next iteration(s) and
+	 * we increase the frequency immediately
+	 */
+	if (dbs_tuners_ins.early_demand) {
+		if (max_load_freq > this_dbs_info->prev_load_freq &&
+			(max_load_freq - this_dbs_info->prev_load_freq >
+			dbs_tuners_ins.grad_up_threshold * policy->cur))
+				boost_freq = 1;
+
+			this_dbs_info->prev_load_freq = max_load_freq;
+	}
+
 #ifdef CONFIG_MACH_LGE
 /* Boost CPU When wakeup */
 	if (boost_freq == 2) {
@@ -818,7 +875,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 #endif
 	/* Check for frequency increase */
-	if (max_load_freq > dbs_tuners_ins.up_threshold * policy->cur) {
+	if (boost_freq ||
+			max_load_freq > dbs_tuners_ins.up_threshold * policy->cur) {
 		int freq_target, freq_div;
 		freq_target = 0; freq_div = 0;
 
@@ -1014,6 +1072,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		}
 		this_dbs_info->cpu = cpu;
 		this_dbs_info->rate_mult = 1;
+		this_dbs_info->prev_load_freq = 0;
 		ondemand_powersave_bias_init_cpu(cpu);
 		/*
 		 * Start the timerschedule work, when this governor
