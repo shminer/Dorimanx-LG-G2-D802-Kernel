@@ -835,10 +835,11 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			j_dbs_info->prev_load = cur_load;
 		}
 
-		freq_avg = __cpufreq_driver_getavg(policy, j);
 		if (policy == NULL)
 			return;
-		if (freq_avg <= 0)
+
+		/*freq_avg = __cpufreq_driver_getavg(policy, j);
+		if (freq_avg <= 0) */
 			freq_avg = policy->cur;
 
 		load_freq = cur_load * freq_avg;
@@ -875,8 +876,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 #endif
 	/* Check for frequency increase */
-	if (boost_freq ||
-			max_load_freq > dbs_tuners_ins.up_threshold * policy->cur) {
+	if (boost_freq || cur_load > dbs_tuners_ins.up_threshold) {
 		int freq_target, freq_div;
 		freq_target = 0; freq_div = 0;
 
@@ -900,21 +900,23 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 		dbs_freq_increase(policy, freq_target);
 		return;
-	}
+	} else
 
 	/* Check for frequency decrease */
 	/* if we cannot reduce the frequency anymore, break out early */
-	if (policy->cur == policy->min)
+	/*if (policy->cur == policy->min) {
 		return;
+	}*/
 
 	/*
 	 * The optimal frequency is the frequency that is the lowest that
 	 * can support the current CPU usage without triggering the up
 	 * policy. To be safe, we focus DOWN_DIFFERENTIALDOWN_DIFFERENTIAL points under the threshold.
 	 */
-	if (max_load_freq < dbs_tuners_ins.adj_up_threshold * policy->cur) {
+	/*if (max_load_freq < dbs_tuners_ins.adj_up_threshold * policy->cur) */{
 		unsigned int freq_next;
-		freq_next = max_load_freq / dbs_tuners_ins.adj_up_threshold;
+		freq_next = cur_load * policy->max / 100;
+		/*freq_next = max_load_freq / dbs_tuners_ins.adj_up_threshold;*/
 
 		/* No longer fully busy, reset rate_mult */
 		this_dbs_info->rate_mult = 1;
