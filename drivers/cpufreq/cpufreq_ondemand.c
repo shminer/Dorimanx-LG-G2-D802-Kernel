@@ -809,9 +809,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		if (policy->cur < policy->max)
 			this_dbs_info->rate_mult =
 				dbs_tuners_ins.sampling_down_factor;
-
 		dbs_freq_increase(policy, freq_target);
-		return;
 	} else {
 		/* Calculate the next frequency proportional to load */
 		unsigned int freq_next;
