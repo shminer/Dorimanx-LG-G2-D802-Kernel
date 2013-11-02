@@ -35,6 +35,7 @@
 #include <linux/of_gpio.h>
 #include <linux/input/touch_synaptics.h>
 #include <linux/lcd_notify.h>
+#include <linux/cpufreq.h>
 
 #include "SynaImage_ds5.h"
 
@@ -170,6 +171,10 @@ static struct workqueue_struct *synaptics_wq;
 
 #define CHARGER_CONNECTED               0x20
 
+#define BOOSTED_TIME	1000	/* ms */
+int hammerhead_boosted;
+static struct timer_list boost_timer;
+
 static struct {
 	u8	finger_reg[MAX_FINGER][BYTES_PER_FINGER];
 } fdata;
@@ -304,10 +309,26 @@ static int touch_work_pre_proc(struct synaptics_ts_data *ts)
 	return 0;
 }
 
+static void touch_boost(struct synaptics_ts_data *ts)
+{
+	if (!ts->boosted_time)
+		return;
+
+	hammerhead_boosted = 1;
+	mod_timer(&boost_timer, jiffies + msecs_to_jiffies(ts->boosted_time));
+}
+
+static void handle_boost(unsigned long data)
+{
+	hammerhead_boosted = 0;
+}
+
 static irqreturn_t touch_irq_handler(int irq, void *dev_id)
 {
 	struct synaptics_ts_data *ts = (struct synaptics_ts_data *)dev_id;
 	ktime_t timestamp = ktime_get();
+
+	touch_boost(ts);
 
 	switch (touch_work_pre_proc(ts)) {
 	case 0:
@@ -1429,12 +1450,34 @@ static ssize_t show_charger(struct device *dev,
 		(ts->charger_type ? "CONNECTED" : "NOT CONNECTED"));
 }
 
+static ssize_t show_boosted_time(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct synaptics_ts_data *ts = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n", ts->boosted_time);
+}
+
+static ssize_t store_boosted_time(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	unsigned int value;
+	struct synaptics_ts_data *ts = dev_get_drvdata(dev);
+
+	sscanf(buf, "%d", &value);
+
+	ts->boosted_time = value;
+
+	return count;
+}
+
 static struct device_attribute synaptics_device_attrs[] = {
 	__ATTR(firmware, S_IRUGO | S_IWUSR, show_fw_info, store_fw_upgrade),
 	__ATTR(reg_control, S_IRUGO | S_IWUSR, NULL, ic_register_ctrl),
 	__ATTR(power_control, S_IRUGO | S_IWUSR, NULL, store_ts_reset),
 	__ATTR(version, S_IRUGO | S_IWUSR, show_fw_ver, NULL),
 	__ATTR(charger, S_IRUGO, show_charger, NULL),
+	__ATTR(boost_time, S_IRUGO | S_IWUSR, show_boosted_time, store_boosted_time),
 };
 
 #ifdef CONFIG_TOUCHSCREEN_CHARGER_NOTIFY
@@ -1836,6 +1879,9 @@ static int synaptics_ts_probe(
 		}
 	}
 
+	ts->boosted_time = BOOSTED_TIME;
+	setup_timer(&boost_timer, handle_boost, 0);
+
 	/* Specific device initialization */
 	touch_ic_init(ts);
 
@@ -1896,6 +1942,7 @@ static int synaptics_ts_remove(struct i2c_client *client)
 	kfree(ts);
 	destroy_workqueue(synaptics_wq);
 	synaptics_wq = NULL;
+	del_timer(&boost_timer);
 
 	return 0;
 }

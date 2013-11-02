@@ -136,6 +136,7 @@ struct synaptics_ts_data {
 	struct power_supply     touch_psy;
 	struct work_struct      work_charger;
 #endif
+	unsigned int		boosted_time;
 };
 
 enum{
