@@ -516,6 +516,7 @@ fail:
 	return ret;
 }
 
+#if 0
 /* 1:enable, 0:disable */
 static int vdd_restriction_apply_all(int en)
 {
@@ -557,6 +558,7 @@ static int vdd_restriction_apply_all(int en)
 		return -EFAULT;
 	return ret;
 }
+#endif
 
 static int msm_thermal_get_freq_table(void)
 {
@@ -665,6 +667,7 @@ static void do_core_control(long temp)
 }
 #endif
 
+#if 0
 static int do_vdd_restriction(void)
 {
 	struct tsens_device tsens_dev;
@@ -713,6 +716,7 @@ exit:
 	mutex_unlock(&vdd_rstr_mutex);
 	return ret;
 }
+#endif
 
 static int do_psm(void)
 {
@@ -829,7 +833,9 @@ static void __ref check_temp(struct work_struct *work)
 	}
 
 	do_core_control(temp);
+#if 0
 	do_vdd_restriction();
+#endif
 	do_psm();
 	do_freq_control(temp);
 
@@ -1207,7 +1213,7 @@ int __devinit msm_thermal_init(struct msm_thermal_data *pdata)
 	if (num_possible_cpus() > 1)
 		core_control_enabled = 1;
 	INIT_DELAYED_WORK(&check_temp_work, check_temp);
-	schedule_delayed_work(&check_temp_work, 0);
+	schedule_delayed_work(&check_temp_work, 20);
 
 	if (num_possible_cpus() > 1)
 		register_cpu_notifier(&msm_thermal_cpu_notifier);
