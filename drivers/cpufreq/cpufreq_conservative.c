@@ -416,10 +416,9 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		return;
 
 	/* Check for frequency boost */
-	if (hammerhead_boosted && policy->cpu == 0 &&
-			policy->cur < dbs_tuners_ins.boostfreq) {
+	if (hammerhead_boosted && policy->cur < dbs_tuners_ins.boostfreq) {
 		__cpufreq_driver_target(policy, dbs_tuners_ins.boostfreq,
-			CPUFREQ_RELATION_H);
+					CPUFREQ_RELATION_H);
 		return;
 	}
 
@@ -452,10 +451,12 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	 * policy. To be safe, we focus 10 points under the threshold.
 	 */
 	if (max_load < (dbs_tuners_ins.down_threshold - 10)) {
-		if (hammerhead_boosted && policy->cpu == 0 &&
-				this_dbs_info->requested_freq < dbs_tuners_ins.boostfreq) {
-			__cpufreq_driver_target(policy, this_dbs_info->requested_freq,
-				CPUFREQ_RELATION_H);
+		if (hammerhead_boosted
+		    && this_dbs_info->requested_freq <
+		    dbs_tuners_ins.boostfreq) {
+			__cpufreq_driver_target(policy,
+						this_dbs_info->requested_freq,
+						CPUFREQ_RELATION_H);
 			return;
 		}
 		freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
