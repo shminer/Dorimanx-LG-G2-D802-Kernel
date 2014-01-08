@@ -48,7 +48,7 @@ static int tracectr_notifier(struct notifier_block *self, unsigned long cmd,
 {
 	struct thread_info *thread = v;
 	int current_pid;
-	u32 cpu = smp_processor_id();
+	u32 cpu = thread->cpu;
 
 	if (cmd != THREAD_NOTIFY_SWITCH)
 		return -EFAULT;
