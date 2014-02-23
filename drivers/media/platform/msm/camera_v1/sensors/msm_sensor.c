@@ -158,15 +158,15 @@ void msm_sensor_start_stream(struct msm_sensor_ctrl_t *s_ctrl)
 
 	if (s_ctrl->func_tbl->sensor_adjust_frame_lines)
 		s_ctrl->func_tbl->sensor_adjust_frame_lines(s_ctrl);
-/*                                
-                                  
-  
-                                                                      
-                                                                           
-                                 
-  
-                                                                          
-                      
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
+ *
+ * COMMENT: If the following lines are commented out, then the default
+ * count value "255" will be printed out. If this is removed, then a number
+ * like "29" will be printed out.
+ *
+ * COMMENT: If sensor is working well, then frame count and SMIA ver(0X0A)
+ * will be printed out
  */
 #ifdef CONFIG_MACH_LGE
 #if 1
@@ -611,9 +611,9 @@ int32_t msm_sensor_disable_i2c_mux(struct msm_camera_i2c_conf *i2c_conf)
 	return 0;
 }
 
-/*                             
-                                          
-                                           
+/* jinw.kim@lge.com, 2013-01-03
+ * G2 Main/Sub Camera Bring up(IMX132/135)
+ * Add function imx13x_sensor_power_up&down
  */
 #if defined(CONFIG_MACH_LGE)
 EXPORT_SYMBOL(msm_sensor_enable_i2c_mux);
@@ -1820,8 +1820,8 @@ int32_t msm_sensor_platform_probe(struct platform_device *pdev, void *data)
 		dev_get_drvdata(dev);
 	CDBG("%s sd %p\n", __func__,
 		s_ctrl->sensor_i2c_client->cci_client->cci_subdev);
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-22
+ * G2  Sub Camera Bring up(IMX132)
  */
 #ifdef CONFIG_MACH_LGE
 #if 0
@@ -1881,8 +1881,8 @@ power_down:
 	return rc;
 }
 
-/*                             
-                                                          
+/* jinw.kim@lge.com, 2013-01-03
+ * Re-define msm_sensor_power to recognize dual recording.
  */
 #if defined(CONFIG_MACH_LGE)
 int32_t msm_sensor_power(struct v4l2_subdev *sd, int on)

@@ -107,11 +107,40 @@ void msm_camera_io_memcpy(void __iomem *dest_addr,
 	msm_camera_io_dump(dest_addr, len);
 }
 
+int msm_cam_clk_sel_src(struct device *dev, struct msm_cam_clk_info *clk_info,
+		struct msm_cam_clk_info *clk_src_info, int num_clk)
+{
+	int i;
+	int rc = 0;
+	struct clk *mux_clk = NULL;
+	struct clk *src_clk = NULL;
+
+	for (i = 0; i < num_clk; i++) {
+		if (clk_src_info[i].clk_name) {
+			mux_clk = clk_get(dev, clk_info[i].clk_name);
+			if (IS_ERR(mux_clk)) {
+				pr_err("%s get failed\n",
+					 clk_info[i].clk_name);
+				continue;
+			}
+			src_clk = clk_get(dev, clk_src_info[i].clk_name);
+			if (IS_ERR(src_clk)) {
+				pr_err("%s get failed\n",
+					clk_src_info[i].clk_name);
+				continue;
+			}
+			clk_set_parent(mux_clk, src_clk);
+		}
+	}
+	return rc;
+}
+
 int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 		struct clk **clk_ptr, int num_clk, int enable)
 {
 	int i;
 	int rc = 0;
+	long clk_rate;
 	if (enable) {
 		for (i = 0; i < num_clk; i++) {
 			CDBG("%s enable %s\n", __func__,
@@ -129,6 +158,24 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 					pr_err("%s set failed\n",
 						   clk_info[i].clk_name);
 					goto cam_clk_set_err;
+				}
+			} else if (clk_info[i].clk_rate == INIT_RATE) {
+				clk_rate = clk_get_rate(clk_ptr[i]);
+				if (clk_rate == 0) {
+					clk_rate =
+						  clk_round_rate(clk_ptr[i], 0);
+					if (clk_rate < 0) {
+						pr_err("%s round rate failed\n",
+							  clk_info[i].clk_name);
+						goto cam_clk_set_err;
+					}
+					rc = clk_set_rate(clk_ptr[i],
+								clk_rate);
+					if (rc < 0) {
+						pr_err("%s set rate failed\n",
+							  clk_info[i].clk_name);
+						goto cam_clk_set_err;
+					}
 				}
 			}
 			rc = clk_prepare(clk_ptr[i]);

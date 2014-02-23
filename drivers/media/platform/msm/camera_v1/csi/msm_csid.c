@@ -76,9 +76,9 @@ static void msm_csid_set_debug_reg(void __iomem *csidbase,
 	uint32_t val = 0;
 	val = ((1 << csid_params->lane_cnt) - 1) << 20;
 
-/*                               
-                                                        
-                               
+/* soojung.lim@lge.com 2012-12-07
+ * If it is set true, then lots of interrupt is occured.
+ * Only use this for debugging.
  */
 #ifdef CONFIG_MACH_LGE
 #else

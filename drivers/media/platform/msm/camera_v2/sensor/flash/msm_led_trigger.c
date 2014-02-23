@@ -54,17 +54,13 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 		return -EINVAL;
 	}
 
-	if (fctrl->num_sources == 0) {
-		pr_err("no source\n");
-		return 0;
-	}
-
 	switch (cfg->cfgtype) {
 	case MSM_CAMERA_LED_OFF:
 		for (i = 0; i < fctrl->num_sources; i++)
 			if (fctrl->flash_trigger[i])
 				led_trigger_event(fctrl->flash_trigger[i], 0);
-		led_trigger_event(fctrl->torch_trigger, 0);
+		if (fctrl->torch_trigger)
+			led_trigger_event(fctrl->torch_trigger, 0);
 		break;
 
 	case MSM_CAMERA_LED_LOW:
@@ -74,6 +70,8 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 		break;
 
 	case MSM_CAMERA_LED_HIGH:
+		if (fctrl->torch_trigger)
+			led_trigger_event(fctrl->torch_trigger, 0);
 		for (i = 0; i < fctrl->num_sources; i++)
 			if (fctrl->flash_trigger[i])
 				led_trigger_event(fctrl->flash_trigger[i],
@@ -85,9 +83,11 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 		for (i = 0; i < fctrl->num_sources; i++)
 			if (fctrl->flash_trigger[i])
 				led_trigger_event(fctrl->flash_trigger[i], 0);
+		if (fctrl->torch_trigger)
 		led_trigger_event(fctrl->torch_trigger, 0);
 		break;
 
+	/* LGE_CHANGE_S, To set lowest flash current for DCM, 2013-07-08, jinw.kim@lge.com */
 	case MSM_CAMERA_LED_LOW_MIN_CURRENT:
 #if defined(CONFIG_MACH_MSM8974_G2_DCM)
 		led_trigger_event(fctrl->torch_trigger, 1);
@@ -95,6 +95,8 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 		led_trigger_event(fctrl->torch_trigger, 200);
 #endif
 		break;
+	/* LGE_CHANGE_E, To set lowest flash current for DCM, 2013-07-08, jinw.kim@lge.com */
+
 	default:
 		rc = -EFAULT;
 		break;

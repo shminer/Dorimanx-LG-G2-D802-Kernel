@@ -24,7 +24,7 @@
 #define		OISINI
 #include "lgit_ois_old.h"
 
-#define LAST_UPDATE  "13-08-01, 0x0204B_Q2_3" 
+#define LAST_UPDATE  "13-08-01, 0x0204B_Q2_" 
 
 
 //**************************
@@ -1803,334 +1803,6 @@ unsigned char	TneGvc( uint8_t flag )
 	
 	return( UcGvcSts ) ;
 }
-//---------------------------------------------------------------------------------//
-// 2013-08-10 added for gain-loop test 
-//---------------------------------------------------------------------------------//
-#define     __MEASURE_LOOPGAIN      0x00
-
-//==============================================================================
-//  Function    :   SetSineWave()
-//  inputs      :   UcJikuSel   0: X-Axis
-//                              1: Y-Axis
-//                  UcMeasMode  0: Loop Gain frequency setting
-//                              1: Bias/Offset frequency setting
-//  outputs     :   void
-//  explanation :   Initializes sine wave settings:
-//                      Sine Table, Amplitue, Offset, Frequency
-//  revisions   :   First Edition                          2011.04.13 d.yamagata
-//==============================================================================
-void SetSineWave( unsigned char UcJikuSel , unsigned char UcMeasMode )
-{
-	unsigned char   UcSWFC1[]   = { 0x7D/*139Hz*/ , 0x0F/*15Hz*/ } ,            // { Loop Gain setting , Bias/Offset setting}
-                    UcSWFC2[]   = { 0x00/*150Hz*/ , 0x00/*20Hz*/ } ;            // { Loop Gain setting , Bias/Offset setting}
-
-    unsigned char   UcSwSel[2][2] = { { 0x80 , 0x40 } ,                         // Loop gain setting
-                                      { 0x00 , 0x00 }                           // Bias/Offset Setting
-                                    };
-
-    UcMeasMode &= 0x01;
-    UcJikuSel  &= 0x01;
-
-    /* Manually Set Offset */
-    RamWriteA( WAVXO , 0x0000 );                                                // 0x11D5
-    RamWriteA( WAVYO , 0x0000 );                                                // 0x11D6
-
-    /* Manually Set Amplitude */
-    //RamWriteA( wavxg , 0x7FFF );                                                // 0x13C3
-    //RamWriteA( wavyg , 0x7FFF );                                                // 0x13C4
-	RamWriteA( wavxg , 0x3000 );                                                // 0x13C3
-    RamWriteA( wavyg , 0x3000 );                                                // 0x13C4
-
-    /* Set Frequency */
-    //****************************************************
-    //  Žü”g” = (fs/96)*(SWB+1)/(SWA+1)*1/(2^SWC)  [ Hz ]
-    //****************************************************
-    RegWriteA( SWFC1 , UcSWFC1[UcMeasMode] );                                   // 0x00DD    [ SWB(7:4) ][ SWA(3:0) ]
-    RegWriteA( SWFC2 , UcSWFC2[UcMeasMode] );                                   // 0x00DE    [ SWCIR | SWDIR | - | - ][ SWCOM | SWFC(2:0) ]
-    RegWriteA( SWFC3 , 0x00 );                                                  // 0x00DF    [ SWINIP | SWBGNP(6:0) ]
-    RegWriteA( SWFC4 , 0x00 );                                                  // 0x00E0    [ SWFINP | SWENDP(6:0) ]
-    RegWriteA( SWFC5 , 0x00 );                                                  // 0x00E1    [ SWFT(7:0) ]
-
-    /* Set Sine Wave Input RAM */
-    RegWriteA( SWSEL , UcSwSel[UcMeasMode][UcJikuSel] );                        // 0x00E2    [ SINX | SINY | SING | SIN0END ][ SINGDPX1 | SINGDPX2 | SINGDPY1 | SINGDPY2 ]
-
-    /* Clear Optional Sine wave input address */
-    if( !UcMeasMode )       // Loop Gain mode
-    {
-        RegWriteA( SINXADD , 0x00 );                                            // 0x00E3  [ SINXADD(7:0) ]
-        RegWriteA( SINYADD , 0x00 );                                            // 0x00E4  [ SINYADD(7:0) ]
-    }
-    else if( !UcJikuSel )   // Bias/Offset mode X-Axis
-    {
-        RegWriteA( SINXADD , (unsigned char)LXDODAT );                          // 0x00E3  [ SINXADD(7:0) ]
-        RegWriteA( SINYADD , 0x00 );                                            // 0x00E4  [ SINYADD(7:0) ]
-    }
-    else                    // Bias/Offset mode Y-Axis
-    {
-        RegWriteA( SINXADD , 0x00 );                                            // 0x00E3  [ SINXADD(7:0) ]
-        RegWriteA( SINYADD , (unsigned char)LYDODAT );                          // 0x00E4  [ SINYADD(7:0) ]
-    }
-}
-
-//==============================================================================
-//  Function    :   StartSineWave()
-//  inputs      :   none
-//  outputs     :   void
-//  explanation :   Starts sine wave
-//  revisions   :   First Edition                          2011.04.13 d.yamagata
-//==============================================================================
-void StartSineWave( void )
-{
-    /* Start Sine Wave */
-    RegWriteA( SWEN , 0x80 );                                                   // 0x00DB     [ SINON | SINRST | - | - ][ SININISET | - | - | - ]
-}
-
-//==============================================================================
-//  Function    :   StopSineWave()
-//  inputs      :   void
-//  outputs     :   void
-//  explanation :   Stops sine wave
-//  revisions   :   First Edition                          2011.04.13 d.yamagata
-//==============================================================================
-void StopSineWave( void )
-{
-    /* Set Sine Wave Input RAM */
-    RegWriteA( SWSEL   , 0x00 );                                                // 0x00E2    [ SINX | SINY | SING | SIN0END ][ SINGDPX1 | SINGDPX2 | SINGDPY1 | SINGDPY2 ]
-    RegWriteA( SINXADD , 0x00 );                                                // 0x00E3  [ SINXADD(7:0) ]
-    RegWriteA( SINYADD , 0x00 );                                                // 0x00E4  [ SINYADD(7:0) ]
-
-    /* Stop Sine Wave */
-    RegWriteA( SWEN  , 0x00 );                                                  // 0x00DB     [ SINON | SINRST | - | - ][ SININISET | - | - | - ]
-}
-
-
-//==============================================================================
-//  Function    :   SetMeaseFil_LoopGain()
-//  inputs      :   UcJikuSel   0: X-Axis
-//                              1: Y-Axis
-//                  UcMeasMode  0: Loop Gain frequency setting
-//                              1: Bias/Offset frequency setting
-//                  UcFilSel
-//  outputs     :   void
-//  explanation :
-//  revisions   :   First Edition                          2011.04.13 d.yamagata
-//==============================================================================
-void SetMeasFil( unsigned char UcJikuSel , unsigned char UcMeasMode , unsigned char UcFilSel )
-{
-    unsigned short  UsIn1Add[2][2] = { { LXC1   , LYC1   } ,                    // Loop Gain Setting
-                                       { ADHXI0 , ADHYI0 }                      // Bias/Offset Setting
-                                     } ,
-                    UsIn2Add[2][2] = { { LXC2   , LYC2   } ,                    // Loop Gain Setting
-                                       { 0x0000 , 0x0000 }                      // Bias/Offset Setting
-                                     } ;
-
-    /* Set Limits on Input Parameters */
-    UcJikuSel  &= 0x01;
-    UcMeasMode &= 0x01;
-    if( UcFilSel > NOISE ) UcFilSel = THROUGH;
-	
-	MesFil( UcFilSel ) ;					/* Set Measure filter */
-
-    RegWriteA( MS1INADD , (unsigned char)UsIn1Add[UcMeasMode][UcJikuSel] );     // 0x00C2
-    RegWriteA( MS1OUTADD, 0x00 );                                               // 0x00C3
-
-
-    RegWriteA( MS2INADD , (unsigned char)UsIn2Add[UcMeasMode][UcJikuSel] );     // 0x00C6
-    RegWriteA( MS2OUTADD, 0x00 );                                               // 0x00C7
-
-    /* Set Measure Filter Down Sampling */
-    //****************************************************
-    //  Measure Filter Down Sampling = Fs/(MSFDS+1)
-    //****************************************************
-    RegWriteA( MSFDS , 0x00 );                                                  // 0x00C8
-}
-
-//==============================================================================
-//  Function    :   StartMeasFil()
-//  inputs      :   void
-//  outputs     :   void
-//  explanation :
-//  revisions   :   First Edition                          2011.04.13 d.yamagata
-//==============================================================================
-void StartMeasFil( void )
-{
-    /* Enable Measure Filters */
-    RegWriteA( MSF1EN , 0x01 );                                                 // 0x00C0       [ MSF1SW | - | - | - ][ - | - | - | MSF1EN ]
-    RegWriteA( MSF2EN , 0x01 );                                                 // 0x00C4       [ MSF2SW | - | - | - ][ - | - | - | MSF2EN ]
-}
-
-//==============================================================================
-//  Function    :   StopMeasFil()
-//  inputs      :   void
-//  outputs     :   void
-//  explanation :
-//  revisions   :   First Edition                          2011.04.13 d.yamagata
-//==============================================================================
-void StopMeasFil( void )
-{
-    /* Enable Measure Filters */
-    RegWriteA( MSF1EN , 0x00 );                                                 // 0x00C0       [ MSF1SW | - | - | - ][ - | - | - | MSF1EN ]
-    RegWriteA( MSF2EN , 0x00 );                                                 // 0x00C4       [ MSF2SW | - | - | - ][ - | - | - | MSF2EN ]
-}
-
-//********************************************************************************
-// Function Name 	: IntegralMes
-// Retun Value		: void
-// Argment Value	: Sine wave Frequency Index
-// Explanation		: Integration Value Measure Setting
-// History			: First edition 						2013.07.31 Y.Tashita
-//********************************************************************************
-void	IntegralMes( unsigned char UcSinFrq )
-{
-	RegWriteA( MSMA, 0x03 ) ;							// 0x00C9	Cycle Wait, Sin Wave Measure
-
-	if ( UcSinFrq == 0 ){
-		WitTim( 200 ) ;
-	}else if ( UcSinFrq == 1 ){
-		WitTim( 100 ) ;
-	}else{
-		WitTim( 60 ) ;
-	}
-
-	RegWriteA( MSMA, 0x00 ) ;							// 0x00C9	Measure End
-
-}
-
-//********************************************************************************
-// Function Name 	: GetIntegral
-// Retun Value		: Measure Result
-// Argment Value	: LXG1/LXG2 Select
-// Explanation		: Integration Value Measure Result Read
-// History			: First edition 						2013.07.31 Y.Tashita
-//********************************************************************************
-unsigned short	GetIntegral( unsigned char	UcDirSel )
-{
-	unsigned short	UsAmpVal ;
-
-	if( !UcDirSel ) {
-		RamReadA( MSCAP, &UsAmpVal ) ;				// 0x120A
-	} else {
-		RamReadA( MSCAP2, &UsAmpVal ) ;				// 0x12AC
-	}
-
-	return( UsAmpVal ) ;
-}
-
-//********************************************************************************
-// Function Name 	: CalAmpRatio
-// Retun Value		: Amplitude Ratio * 100
-// Argment Value	: Ratio Calculation Source Value
-// Explanation		: Sine Wave Amplitude Ratio Calculation Function
-// History			: First edition 						2013.08.01 Y.Tashita
-//********************************************************************************
-short	CalAmpRatio( unsigned short	UsSource1, unsigned short	UsSource2 )
-{
-	short	SsAmpRatio ;
-
-	SsAmpRatio	= ( short )( ( ( unsigned long )UsSource1 * 100 ) / UsSource2 ) ;
-
-	return( SsAmpRatio ) ;
-}
-
-//==============================================================================
-//  Function    :   SrvGainMes()
-//  inputs      :   UcJikuSel   0: X-Axis, 1: Y-Axis
-//  outputs     :   OK/NG Judge Value
-//  explanation :
-//  revisions   :   First Edition                          2013.07.31 Y.Tashita
-//==============================================================================
-unsigned char	 SrvGainMes( unsigned char	UcJikuSel )
-{
-	unsigned short  UsSineAdd[]	= { lxxg   , lyxg   } ;
-	unsigned short  UsSineGan[]	= { 0x2AF5 , 0x2AF5 } ;
-	unsigned char	UcSWFC1[]	= { 0x0B, 0x7D, 0x42 } ;	// 20Hz, 139Hz, 406Hz
-	unsigned char	UcSWFC2[]	= { 0x00, 0x00, 0x00 } ;	// SWC = 0, 0, 0
-	short			SsRatioSh[]	= { 345, 141, 50 } ;
-	unsigned char	UcJudgeSts1, UcJudgeSts2, UcJudgeSts3 ;
-	unsigned char	UcJudgeSts = SUCCESS ;
-	unsigned char	UcSinFrq ;
-	unsigned short	UsMSCAP1, UsMSCAP2 ;
-	short			SsCalRatio ;
-
-	UcJikuSel	&= 0x01 ;
-	UcJudgeSts1	= 0x00 ;
-	UcJudgeSts2	= 0x00 ;
-	UcJudgeSts3	= 0x00 ;
-
-	/* set sine wave */
-	SetSineWave( UcJikuSel, __MEASURE_LOOPGAIN ) ;
-	RamWriteA( wavxg , 0x7FFF );                                                // 0x13C3
-    RamWriteA( wavyg , 0x7FFF );                                                // 0x13C4
-    
-	/* Set Servo Filter */
-	RamWriteA( UsSineAdd[ UcJikuSel ], UsSineGan[ UcJikuSel ] ) ;				// Set Sine Wave input amplitude
-
-	/* set Measure Filter */
-	SetMeasFil( UcJikuSel, __MEASURE_LOOPGAIN, THROUGH ) ;
-
-	/* Start Measure Filters */
-	StartMeasFil() ;
-
-	/* Start Sine Wave */
-	StartSineWave() ;
-	WitTim( 100 ) ;
-	for( UcSinFrq = 0 ; UcSinFrq < 3 ; UcSinFrq++ )
-	{
-		RegWriteA( SWFC1, UcSWFC1[ UcSinFrq ] ) ;								// 0x00DD	[ SWB(7:4) ][ SWA(3:0) ]
-		RegWriteA( SWFC2, UcSWFC2[ UcSinFrq ] ) ;								// 0x00DE
-
-		RegWriteA( DLYCLR2, 0xC0 ) ;
-		WitTim( 50 ) ;
-		IntegralMes( UcSinFrq ) ;
-		UsMSCAP1	= GetIntegral( 0 ) ;
-		UsMSCAP2	= GetIntegral( 1 ) ;
-		SsCalRatio	= CalAmpRatio( UsMSCAP1, UsMSCAP2 ) ;
-		CDBG("%s, %d=> %x, %x, ratio=%x (%x) \n", 
-			__func__, UcSinFrq, UsMSCAP1, UsMSCAP2, SsCalRatio, SsRatioSh[ UcSinFrq ]);
-		
-		if( !UcSinFrq ) {
-			if( SsCalRatio < SsRatioSh[ UcSinFrq ] ) {
-				if( UcJikuSel == X_DIR){
-					UcJudgeSts1	= EXE_XFRQ1 ;
-				}else if( UcJikuSel == Y_DIR ){
-					UcJudgeSts1	= EXE_YFRQ1 ;
-				}
-			}
-		} else if( UcSinFrq == 1 ) {
-			SsCalRatio	&= 0x7FFF ;
-			if( SsCalRatio > SsRatioSh[ UcSinFrq ] ) {
-				if( UcJikuSel == X_DIR){
-					UcJudgeSts2	= EXE_XFRQ2 ;
-				}else if( UcJikuSel == Y_DIR ){
-					UcJudgeSts2	= EXE_YFRQ2 ;
-				}
-			}
-		} else {
-			if( SsCalRatio > SsRatioSh[ UcSinFrq ] ) {
-				if( UcJikuSel == X_DIR){
-					UcJudgeSts3	= EXE_XFRQ3 ;
-				}else if( UcJikuSel == Y_DIR ){
-					UcJudgeSts3	= EXE_YFRQ3 ;
-				}
-			}
-		}
-	}
-
-	/* Cut Sine input */
-	RamWriteA( UsSineAdd[UcJikuSel] , 0x0000 );                                 // Set Sine Wave input amplitude
-
-	/* Stop Sine Wave */
-	StopSineWave();
-
-	/* Stop Measure Filter */
-	StopMeasFil();
-
-	UcJudgeSts	= UcJudgeSts1 | UcJudgeSts2 | UcJudgeSts3 ;
-
-	return( UcJudgeSts ) ;
-}
-
-//-------------------------------------------------------------------//
 
 void EnsureWrite(uint16_t addr, int16_t data, int8_t trial)
 {
@@ -2170,24 +1842,13 @@ int32_t	lgit_ois_on( enum ois_ver_t ver )
 			rc = IniSet();
 			if (rc < 0) { return rc;}
 			usleep(5000);
-			rc = OIS_INIT_GYRO_ADJ_FAIL;	
 			do
 			{
-				if (TneGvc(ver) == EXE_END) 
-				{
-					rc = OIS_SUCCESS;  
-					break; 
-				}
+				if (TneGvc(ver) == EXE_END) { break; }
 			} while (i++ < 5);
 			
 			usleep(5000);
 			RtnCen(0);
-
-			if ( (SrvGainMes(X_DIR) | SrvGainMes(Y_DIR)) != 0)
-			{
-				rc |= OIS_INIT_SRV_GAIN_FAIL;
-			}
-			
 			OisOff();
 
 			EnsureWrite(HXSEPT1, 0x0000, 5);
@@ -2202,7 +1863,7 @@ int32_t	lgit_ois_on( enum ois_ver_t ver )
 	if (StCalDat.UsVerDat != 0x0204)
 	{
 		CDBG("%s, old module %x \n", __func__,StCalDat.UsVerDat);
-		rc |= OIS_INIT_OLD_MODULE;
+		rc = OIS_INIT_OLD_MODULE;
 	}
 
 	CDBG("%s, exit \n", __func__);
@@ -2320,25 +1981,32 @@ int16_t lgit_convert_int32(int32_t in)
 
 /*
 	[Integration note]
-	(1) gyro scale match (output unit -> dps*256)
-	from gyro IC & driver IC spec sheet, 
-		gyro[dps] = gyro[int16] / 65.5
-		gyro[int16] = gyro[float32]*0x7FFF
+	(1) gyro scale match
+	in this driver, 
+	output gyro[int16] value is calculated by,
 
-    ->	gyro[dps*256] = gyro[float32] * 0x7FFF * 4 * {256 / 262}
-    (attention : lgit_convert_float32(gyro,18) returns gyro[flaot32]*0x7FFF*4)
+		gyro[int16] = gyro[float32] * 0x7FFF * 4 * {256 / 262}
 
-	(2) hall scale match (output unit -> um*256)
-	from measurement, pixel-code relation is averagely given by,
-		hall[pixel] : hall[code] = 43 pixel : 8471	
+	main purpose is to match gyro[int16] with physical value gyro[dps]
+	gyro[dps] is given by, (if IDF2020 == 2)
 
-	 -> hall[um*256] = hall[code]*256*1.12[um/pixels]*43[pixel]/8471 
-					 = hall[code]*256/176		
+	gyro[dps] = gyro[float32] * 0x7FFF / 65.5
+
+	then, 
+	gyro[int16] = gyro[dps] * 65.5 * 4 * 256 / 262 
+				= gyro[dps] * 256
+				= {gyro[float32] * 07FFF * 4} * {256/262}				
+
+	(2) hall scale match
+	hall[pixel] : hall[in] = 61.832 pixel : 6700
+	
+	hall[out] = hall[pixel*256] = hall[in]*256*61.872/6700 
+	                            = hall[in]*256/108
+			
 */
 
 #define GYRO_SCALE_FACTOR 262
-#define HALL_SCALE_FACTOR 176
-#define STABLE_THRESHOLD  600 // 3.04[pixel]*1.12[um/pixel]*HALL_SCALE_FACTOR
+#define HALL_SCALE_FACTOR 104 // 108
 
 int32_t lgit_ois_stat(struct msm_sensor_ois_info_t *ois_stat)
 {
@@ -2377,39 +2045,25 @@ int32_t lgit_ois_stat(struct msm_sensor_ois_info_t *ois_stat)
 	{
 		ois_stat->is_stable = 0; 
 	}
-
-	// if target-hall difference is bigger than STABLE_THRESHOLD
-	RamReadA(LXCFIN, &target);
-	if (abs(target) > STABLE_THRESHOLD)
-	{
-		ois_stat->is_stable = 0;
-	}
-
-	RamReadA(LYCFIN, &hall);
-	if (abs(hall) > STABLE_THRESHOLD)
-	{
-		ois_stat->is_stable = 0;	
-	}	
-	CDBG("%s stable %x, %x, %d", __func__, target,hall, ois_stat->is_stable);
 	
 	return OIS_SUCCESS;
 }
 
 #define LENS_MOVE_POLLING_LIMIT (10)
-#define LENS_MOVE_THRESHOLD     (5) // um
+#define LENS_MOVE_THRESHOLD     (5) // pixels.
 
-int32_t lgit_ois_move_lens(int16_t target_x, int16_t target_y)
+int32_t lgit_ois_move_lens(int16_t offset_x, int16_t offset_y)
 {
 	int32_t rc = OIS_SUCCESS;
-	int16_t offset_x, offset_y;
 	int16_t oldx, oldy;
 	int16_t hallx1, hally1;
 	int16_t hallx2, hally2;
 
 	//1. convert um*256 -> code
-    // hall[code] = hall[pixel*256]*176/256
-	offset_x = -1 * target_x * HALL_SCALE_FACTOR / 256;
-	offset_y = -1 * target_y * HALL_SCALE_FACTOR / 256;
+    // hall[in] = hall[pixel*256]*108/256
+
+	offset_x = offset_x * HALL_SCALE_FACTOR / 256;
+	offset_y = offset_y * HALL_SCALE_FACTOR / 256;
 
     //2. read previous condition.
 	RamReadA(HXSEPT1, &oldx);	

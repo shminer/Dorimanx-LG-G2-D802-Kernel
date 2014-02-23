@@ -222,8 +222,8 @@ struct msm_sensor_ctrl_t {
 	uint16_t power_seq_delay;
 	struct msm_sensor_eeprom_data eeprom_data;
 
-/*                             
-                                                                                                 
+/* jinw.kim@lge.com, 2013-01-03
+ * Add viriable "skip_vio" to skip disable vio for dual recording. It will be set by msm_power().
  */
  #if defined(CONFIG_MACH_LGE)
 	uint16_t skip_vio;

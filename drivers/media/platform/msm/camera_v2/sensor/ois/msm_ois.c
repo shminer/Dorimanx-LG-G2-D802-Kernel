@@ -396,13 +396,13 @@ int msm_ois_mode(enum ois_mode_t data)
 	return rc;
 }
 
-int msm_ois_move_lens (int16_t target_x, int16_t target_y)
+int msm_ois_move_lens (int16_t offset_x, int16_t offset_y)
 {
 	int32_t rc = 0;
-	CDBG("%s: target = %d, %d\n",__func__, target_x, target_y);
+	CDBG("%s: offset = %x, %x\n",__func__, offset_x, offset_y);
 	if (msm_ois_t.ois_func_tbl)
 	{
-		rc = msm_ois_t.ois_func_tbl->ois_move_lens(target_x, target_y);
+		rc = msm_ois_t.ois_func_tbl->ois_move_lens(offset_x, offset_y);
 	}
 	return rc;
 }

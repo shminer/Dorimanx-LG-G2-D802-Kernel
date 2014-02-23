@@ -20,7 +20,7 @@
 #include "msm_ois.h"
 #include "msm_ois_i2c.h"
 
-#define LAST_UPDATE "13-08-02, 11B"
+#define LAST_UPDATE "13-06-26, 8_4B"
 
 #define E2P_FIRST_ADDR 			(0x0710)
 #define E2P_DATA_BYTE			(28)
@@ -34,21 +34,22 @@
 #define LIMIT_STATUS_POLLING	(10)
 #define LIMIT_OIS_ON_RETRY		(5)
 
+#if 1
 static struct ois_i2c_bin_list FF_VERX_REL_BIN_DATA = 
 {
 	.files = 3,
 	.entries = 
 	{
 		{
-			.filename = "DLdata_rev11B_data1.ecl",
-			.filesize = 0x0AB8,
+			.filename = "DLdata_rev8_4B_data1.ecl",
+			.filesize = 0x08BC,
 			.blocks = 1,
 			.addrs = {
-				{0x0000,0x0AB7,0x0000},
+				{0x0000,0x08BB,0x0000},
 				}
 		},
 		{
-			.filename = "DLdata_rev11B_data2.ecl",
+			.filename = "DLdata_rev8_4B_data2.ecl",
 			.filesize = 0x00D4,
 			.blocks = 1,
 			.addrs = {
@@ -56,7 +57,7 @@ static struct ois_i2c_bin_list FF_VERX_REL_BIN_DATA =
 				}
 		},
 		{
-			.filename = "DLdata_rev11B_data3.ecl",
+			.filename = "DLdata_rev8_4B_data3.ecl",
 			.filesize = 0x009C,
 			.blocks = 1,
 			.addrs = {
@@ -64,8 +65,42 @@ static struct ois_i2c_bin_list FF_VERX_REL_BIN_DATA =
 				}
 		}
 	},
-	.checksum = 0x000367CE
+	.checksum = 0x00030352
 };
+#else
+static struct ois_i2c_bin_list FF_VERX_REL_BIN_DATA = 
+{
+	.files = 3,
+	.entries = 
+	{
+		{
+			.filename = "DLdata_rev8_5B_data1.ecl",
+			.filesize = 0x08C0,
+			.blocks = 1,
+			.addrs = {
+				{0x0000,0x08BF,0x0000},
+				}
+		},
+		{
+			.filename = "DLdata_rev8_5B_data2.ecl",
+			.filesize = 0x00D4,
+			.blocks = 1,
+			.addrs = {
+				{0x0000,0x00D3,0x5400},
+				}
+		},
+		{
+			.filename = "DLdata_rev8_5B_data3.ecl",
+			.filesize = 0x009C,
+			.blocks = 1,
+			.addrs = {
+				{0x0000,0x009B,0x1188},
+				}
+		}
+	},
+	.checksum = 0x00030304
+};
+#endif
 
 static int fuji_ois_poll_ready(int limit)
 {
@@ -85,6 +120,7 @@ static int fuji_ois_poll_ready(int limit)
 	CDBG("%s, 0x6024 read_byte = %d %d\n",__func__, read_byte, ois_status);
 	return ois_status;
 }
+
 
 int fuji_bin_download(struct ois_i2c_bin_list bin_list)
 {
@@ -191,19 +227,17 @@ int fuji_ois_init_cmd(int limit)
 
 	if (trial == limit) { return OIS_INIT_TIMEOUT; } // initialize fail
 
-	fuji_ois_write_8bytes(0x6080, 0x504084C3, 0x02FC0000);
-	fuji_ois_write_8bytes(0x6080, 0x504088C3, 0xFD040000);
-	fuji_ois_write_8bytes(0x6080, 0x505084C3, 0x02FC0000);
-	fuji_ois_write_8bytes(0x6080, 0x505088C3, 0xFD040000);
+	fuji_ois_write_8bytes(0x6080, 0x504084C3, 0x04760000);
+	fuji_ois_write_8bytes(0x6080, 0x504088C3, 0xFB8A0000);
+	fuji_ois_write_8bytes(0x6080, 0x505084C3, 0x04760000);
+	fuji_ois_write_8bytes(0x6080, 0x505088C3, 0xFB8A0000);
 
 	RegWriteA(0x602C, 0x1B);
 	RegWriteA(0x602D, 0x00);
-	RegWriteA(0x6023, 0x04);
-	RegWriteA(0x6025, 0x40); // Set limit angle
+	RegWriteA(0x6023, 0x04); 
 
 	return OIS_SUCCESS;
 }
-
 
 static struct msm_ois_fn_t fuji_ois_func_tbl;
 
@@ -226,16 +260,18 @@ int32_t fuji_ois_mode(enum ois_mode_t data)
 	switch(data)
 	{
 		case OIS_MODE_PREVIEW_CAPTURE :
-		case OIS_MODE_CAPTURE : 
+		case OIS_MODE_VIDEO : 
 			CDBG("%s:%d, %d preview capture \n", __func__,data, cur_mode);
-			RegWriteA(0x6021, 0x10);
-			RegWriteA(0x6020, 0x02); 
+			RegWriteA(0x6025, 0x40); // Set limit angle
+			RegWriteA(0x6021, 0x11); // 11h: Pan-tilt ON at Movie mode
+			RegWriteA(0x6020, 0x02); // 02h:OIS ON
 			if (!fuji_ois_poll_ready(LIMIT_STATUS_POLLING)) { return OIS_INIT_TIMEOUT; }
 			break;
-		case OIS_MODE_VIDEO : 
+		case OIS_MODE_CAPTURE : 
 			CDBG("%s:%d, %d capture \n", __func__,data, cur_mode);
-			RegWriteA(0x6021, 0x11);
-			RegWriteA(0x6020, 0x02);
+			RegWriteA(0x6025, 0xF0); // Set limit angle
+			RegWriteA(0x6021, 0x00); // 00h: Pan-tilt OFF at Still mode
+			RegWriteA(0x6020, 0x02); // 02h:OIS ON
 			if (!fuji_ois_poll_ready(LIMIT_STATUS_POLLING)) { return OIS_INIT_TIMEOUT; }
 			break;
 		case OIS_MODE_CENTERING_ONLY :
@@ -252,9 +288,6 @@ int32_t fuji_ois_mode(enum ois_mode_t data)
 	return 0;
 }
 
-
-int32_t fuji_ois_move_lens(int16_t target_x, int16_t target_y);
-
 int32_t	fuji_ois_on ( enum ois_ver_t ver )
 {
 	int32_t rc = OIS_SUCCESS;
@@ -267,36 +300,8 @@ int32_t	fuji_ois_on ( enum ois_ver_t ver )
 		return rc;
 	}
 	
-	switch(ver)
-	{
-		case OIS_VER_RELEASE:
-		{
-			rc = fuji_ois_init_cmd(LIMIT_OIS_ON_RETRY);	
-			if (rc < 0)
-			{
-				CDBG("%s: init fail \n", __func__);
-				return rc;
-			}
-
-		}
-		break;	
-		case OIS_VER_DEBUG:
-		case OIS_VER_CALIBRATION:
-		{	
-			rc = fuji_ois_init_cmd(LIMIT_OIS_ON_RETRY);	
-			if (rc < 0)
-			{
-				CDBG("%s: init fail \n", __func__);
-				return rc;
-			}
-			
-			RegWriteA(0x6020, 0x01); 
-			if (!fuji_ois_poll_ready(LIMIT_STATUS_POLLING)) { return OIS_INIT_TIMEOUT; }
-			fuji_ois_move_lens(0x00,0x00); // force move to center
-		}
-		break;
-	}
-
+	rc = fuji_ois_init_cmd(LIMIT_OIS_ON_RETRY);	
+	
 	fuji_ois_func_tbl.ois_cur_mode = OIS_MODE_CENTERING_ONLY;
 	//usleep(1000000);
 
@@ -322,83 +327,40 @@ int32_t	fuji_ois_off(void)
 	return 0;
 }
 
-int16_t fuji_convert_int32(int32_t in)
-{
-	if (in > 32767) return 32767;
-	if (in < -32767) return -32767;
-	return 0xFFFF & in;
-}
-
-/*
- [Integration note]
-  gyro[dps] = gyro[int16] / 125
-  gyro[dps*256] = gyro[int16]*256/125
-
-  hall[code] : hall[um] = 46:67.397
-  hall[code] = hall[um]*46/67.397
-             = hall[um]*256/375
-             = hall[um*256]/375             
-*/
-
-#define GYRO_SCALE_FACTOR 125
-#define HALL_SCALE_FACTOR 375
-
 int32_t fuji_ois_stat(struct msm_sensor_ois_info_t *ois_stat)
 {
-	int16_t gyro = 0;
-		
+	uint8_t buf[2];
+
 	snprintf(ois_stat->ois_provider, ARRAY_SIZE(ois_stat->ois_provider), "FF_ROHM");
 
-	RamReadA(0x6042, &gyro);
-	CDBG("%s gyrox %x \n",__func__, gyro);
-	ois_stat->gyro[0] = fuji_convert_int32(((int32_t)gyro)*256/GYRO_SCALE_FACTOR);
+	ois_i2c_read_seq(0x6042, buf, 2); 
+	CDBG("%s gyrox %x%x \n",__func__, buf[0], buf[1]);
+	ois_stat->gyro[0] = buf[0]<<8 | buf[1];
 
 	ois_stat->target[0] = 0; //not supported
 	
-	ois_stat->hall[0] = 1; //not supported
+	ois_i2c_read_seq(0x6058, buf, 1);
+	CDBG("%s hallx %x \n",__func__, buf[0]);
+	ois_stat->hall[0] = 0xFFFF & (((int8_t)buf[0])*256); //signed 8bit -> signed 16bit
 
-	RamReadA(0x6044, &gyro);
-	CDBG("%s gyroy %x \n",__func__, gyro);
-	ois_stat->gyro[1] = fuji_convert_int32(((int32_t)gyro)*256/GYRO_SCALE_FACTOR);
+	ois_i2c_read_seq(0x6044, buf, 2);
+	CDBG("%s gyroy %x%x \n",__func__, buf[0], buf[1]);
+	ois_stat->gyro[1] = buf[0]<<8 | buf[1];
 
 	ois_stat->target[1] = 0; //not supported
 
-	ois_stat->hall[1] = 1; //not supported
+	ois_i2c_read_seq(0x6059, buf, 1);
+	CDBG("%s hally %x \n",__func__, buf[0]);
+	ois_stat->hall[1] = 0xFFFF & (((int8_t)buf[0])*256); //signed 8bit -> signed 16bit
 	
 	ois_stat->is_stable = 1; // true
 	
 	return 0;
 }
 
-int32_t fuji_ois_move_lens(int16_t target_x, int16_t target_y)
+int32_t fuji_ois_move_lens(int16_t offset_x, int16_t offset_y)
 {
-	int8_t hallx =  target_x/HALL_SCALE_FACTOR;
-	int8_t hally =  target_y/HALL_SCALE_FACTOR;
-	uint8_t result = 0;
-
-	// check ois mode & change to suitable mode
-	RegReadA(0x6020, &result);
-	if (result != 0x01)
-	{
-		RegWriteA(0x6020, 0x01); 
-		if (!fuji_ois_poll_ready(LIMIT_STATUS_POLLING)) { return OIS_INIT_TIMEOUT; }
-	}
-
-	printk("%s target : %d, %d\n", __func__, hallx, hally);
-
-	// hallx range -> D2 to 2E (-46, 46)
-	RegWriteA(0x6099, 0xFF & hallx); // target x position input
-	RegWriteA(0x609A, 0xFF & hally); // target y position input
-	RegWriteA(0x6098, 0x01); // order to move.
-	
-	if (!fuji_ois_poll_ready(LIMIT_STATUS_POLLING*2)) { return OIS_INIT_TIMEOUT; }
-	
-	RegReadA(0x609B, &result);
-
-	if (result == 0x03) { return  OIS_SUCCESS; }
-
-	printk("%s move fail : %x \n", __func__, result);
-	
+	//implement here
 	return OIS_FAIL;
 }
 

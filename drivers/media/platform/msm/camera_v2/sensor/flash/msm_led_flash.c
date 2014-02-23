@@ -42,6 +42,11 @@ static long msm_led_flash_subdev_ioctl(struct v4l2_subdev *sd,
 		return fctrl->func_tbl->flash_get_subdev_id(fctrl, argp);
 	case VIDIOC_MSM_FLASH_LED_DATA_CFG:
 		return fctrl->func_tbl->flash_led_config(fctrl, argp);
+/* LGE_CHANGE_S, camera recovery code, 2013-10-24, jungki.kim@lge.com */
+	case MSM_SD_SHUTDOWN:
+		*(int *)argp = MSM_CAMERA_LED_RELEASE;
+		return fctrl->func_tbl->flash_led_config(fctrl, argp);
+/* LGE_CHANGE_E, camera recovery code, 2013-10-24, jungki.kim@lge.com */
 	default:
 		pr_err("invalid cmd %d\n", cmd);
 		return -ENOIOCTLCMD;

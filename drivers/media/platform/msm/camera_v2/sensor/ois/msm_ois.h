@@ -33,8 +33,6 @@
 #define OIS_INIT_TIMEOUT		-6
 #define OIS_INIT_LOAD_BIN_ERROR -7
 #define OIS_INIT_NOMEM			-8
-#define OIS_INIT_GYRO_ADJ_FAIL	 2
-#define OIS_INIT_SRV_GAIN_FAIL 	 4
 
 struct msm_ois_fn_t {
 	int (*ois_on) (enum ois_ver_t);
@@ -73,8 +71,8 @@ struct msm_ois_ctrl_t {
 
 int msm_init_ois(enum ois_ver_t ver);
 int msm_ois_off(void);
-int msm_ois_info(struct msm_sensor_ois_info_t* info); /*                                                        */
-int msm_ois_mode(enum ois_mode_t data);  /*                                                        */
+int msm_ois_info(struct msm_sensor_ois_info_t* info); /* LGE_CHANGE, OIS stats, 2013-04-09, sungmin.woo@lge.com */
+int msm_ois_mode(enum ois_mode_t data);  /* LGE_CHANGE, OIS interface, 2013-05-29, kh.kang@lge.com */
 int msm_ois_move_lens (int16_t offset_x, int16_t offset_y);
 
 #endif

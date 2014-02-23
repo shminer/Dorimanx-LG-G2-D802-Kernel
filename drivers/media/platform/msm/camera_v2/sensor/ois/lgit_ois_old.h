@@ -25,13 +25,6 @@ extern int fallingCnt;
 #define		EXE_OCADJ	0x42		// Adjust NG : OSC Clock NG
 #define		EXE_GYRADJ	0x82		// Adjust NG : Gyro Offset NG
 #define		EXE_ERR		0x99		// Execute Error End
-#define		EXE_XFRQ1	0x01		// Gain Measurement FRQ1 : X NG
-#define		EXE_XFRQ2	0x02		// Gain Measurement FRQ2 : X NG
-#define		EXE_XFRQ3	0x04		// Gain Measurement FRQ3 : X NG
-#define		EXE_YFRQ1	0x10		// Gain Measurement FRQ1 : Y NG
-#define		EXE_YFRQ2	0x20		// Gain Measurement FRQ2 : Y NG
-#define		EXE_YFRQ3	0x40		// Gain Measurement FRQ3 : Y NG
-
 
 #define	SUCCESS			0x00		// Success
 #define	FAILURE			0x01		// Failure

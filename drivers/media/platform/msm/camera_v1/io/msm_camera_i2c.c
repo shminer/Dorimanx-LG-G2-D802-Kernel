@@ -73,8 +73,8 @@ int32_t msm_camera_i2c_write(struct msm_camera_i2c_client *client,
 		&& data_type != MSM_CAMERA_I2C_WORD_DATA))
 		return rc;
 
-/*                                
-                                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135) - For debugging
  */
 	S_I2C_DBG("%s reg addr = 0x%x data = 0x%x data type: %d\n",
 			  __func__, addr, data, data_type);

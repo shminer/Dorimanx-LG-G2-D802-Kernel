@@ -27,8 +27,8 @@
 #define CCI_I2C_QUEUE_0_SIZE 64
 #define CCI_I2C_QUEUE_1_SIZE 16
 
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-22
+ * G2  Sub Camera Bring up(IMX132)
  */
 #define CCI_TIMEOUT msecs_to_jiffies(1000)
 

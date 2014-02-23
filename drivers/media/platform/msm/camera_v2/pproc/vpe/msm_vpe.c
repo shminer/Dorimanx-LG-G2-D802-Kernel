@@ -25,8 +25,8 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-subdev.h>
 #include <media/media-entity.h>
-#include <media/msmb_pproc.h>
 #include <media/msmb_generic_buf_mgr.h>
+#include <media/msmb_pproc.h>
 #include "msm_vpe.h"
 #include "msm_camera_io_util.h"
 
@@ -1323,6 +1323,11 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 		struct msm_vpe_buff_queue_info_t *buff_queue_info;
 
 		VPE_DBG("VIDIOC_MSM_VPE_DEQUEUE_STREAM_BUFF_INFO\n");
+		if (ioctl_ptr->len != sizeof(uint32_t)) {
+			pr_err("%s:%d Invalid len\n", __func__, __LINE__);
+			mutex_unlock(&vpe_dev->mutex);
+			return -EINVAL;
+		}
 
 		rc = (copy_from_user(&identity,
 				(void __user *)ioctl_ptr->ioctl_ptr,

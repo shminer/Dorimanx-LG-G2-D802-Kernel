@@ -21,7 +21,7 @@
 
 #define MSM_VDEC_DVC_NAME "msm_vdec_8974"
 #define MIN_NUM_OUTPUT_BUFFERS 4
-#define MAX_NUM_OUTPUT_BUFFERS 6
+#define MAX_NUM_OUTPUT_BUFFERS VIDEO_MAX_FRAME
 
 enum msm_vdec_ctrl_cluster {
 	MSM_VDEC_CTRL_CLUSTER_MAX = 1 << 0,
@@ -67,6 +67,12 @@ static const char *const mpeg_video_vidc_extradata[] = {
 	"Extradata digital zoom",
 	"Extradata aspect ratio",
 	"Extradata mpeg2 seqdisp",
+};
+
+static const char *const perf_level[] = {
+	"Nominal",
+	"Performance",
+	"Turbo"
 };
 
 static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
@@ -230,6 +236,19 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 		.qmenu = mpeg_video_vidc_extradata,
 		.step = 0,
 	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL,
+		.name = "Encoder Performance Level",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.minimum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
+		.maximum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO,
+		.default_value = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
+		.menu_skip_mask = ~(
+			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL) |
+			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO)),
+		.qmenu = perf_level,
+		.step = 0,
+	},
 };
 
 #define NUM_CTRLS ARRAY_SIZE(msm_vdec_ctrls)
@@ -243,7 +262,7 @@ static u32 get_frame_size_nv12(int plane,
 static u32 get_frame_size_compressed(int plane,
 					u32 height, u32 width)
 {
-	return (width * height * 3/2)/4;
+	return (width * height * 3/2)/2;
 }
 
 struct msm_vidc_format vdec_formats[] = {
@@ -700,9 +719,7 @@ exit:
 int msm_vdec_s_parm(struct msm_vidc_inst *inst, struct v4l2_streamparm *a)
 {
 	u64 us_per_frame = 0;
-//	int rc = 0, fps = 0, rem = 0;
 	int rc = 0, fps = 0;
-
 	if (a->parm.output.timeperframe.denominator) {
 		switch (a->type) {
 		case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
@@ -728,15 +745,8 @@ int msm_vdec_s_parm(struct msm_vidc_inst *inst, struct v4l2_streamparm *a)
 	}
 
 	fps = USEC_PER_SEC;
-	
-//	rem = do_div(fps, us_per_frame);
-//	if (rem) {
-//		/* Effectively fps = ceil((float)USEC_PER_SEC/us_per_frame) */
-//		fps++;
-//	}
-
 	do_div(fps, us_per_frame);
-	
+
 	if ((fps % 15 == 14) || (fps % 24 == 23))
 		fps = fps + 1;
 	else if ((fps % 24 == 1) || (fps % 15 == 1))
@@ -924,10 +934,8 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 	struct hal_buffer_requirements *bufreq;
 	int extra_idx = 0;
 	struct hfi_device *hdev;
-	// LGE_CHANGE_S, [G2_Player][haewook.kim@lge.com], 20130626, msm vdec Update firmware with input buffer count
 	struct hal_buffer_count_actual new_buf_count;
 	enum hal_property property_id;
-	// LGE_CHANGE_E, [G2_Player][haewook.kim@lge.com], 20130626, msm vdec Update firmware with input buffer count
 	if (!q || !num_buffers || !num_planes
 		|| !sizes || !q->drv_priv) {
 		dprintk(VIDC_ERR, "Invalid input, q = %p, %p, %p\n",
@@ -954,18 +962,17 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 					i, inst->capability.height.max,
 					inst->capability.width.max);
 		}
-		// LGE_CHANGE_S, [G2_Player][haewook.kim@lge.com], 20130626, msm vdec Update firmware with input buffer count
+
 		property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
 		new_buf_count.buffer_type = HAL_BUFFER_INPUT;
 		new_buf_count.buffer_count_actual = *num_buffers;
 		rc = call_hfi_op(hdev, session_set_property,
-		inst->session, property_id, &new_buf_count);
+				inst->session, property_id, &new_buf_count);
 		if (rc) {
 			dprintk(VIDC_WARN,
-					"Failed to set new buffer count(%d) on FW, err: %d\n",
-			new_buf_count.buffer_count_actual, rc);
+				"Failed to set new buffer count(%d) on FW, err: %d\n",
+				new_buf_count.buffer_count_actual, rc);
 		}
-		// LGE_CHANGE_E, [G2_Player][haewook.kim@lge.com], 20130626, msm vdec Update firmware with input buffer count
 		break;
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
 		dprintk(VIDC_DBG, "Getting bufreqs on capture plane\n");
@@ -993,15 +1000,11 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 		}
 		if (*num_buffers && *num_buffers >
 			bufreq->buffer_count_actual) {
-			// LGE_CHANGE_S, [G2_Player][haewook.kim@lge.com], 20130626, msm vdec Update firmware with input buffer count
 			property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
-			// LGE_CHANGE_E, [G2_Player][haewook.kim@lge.com], 20130626, msm vdec Update firmware with input buffer count
-
 			new_buf_count.buffer_type = HAL_BUFFER_OUTPUT;
 			new_buf_count.buffer_count_actual = *num_buffers;
 			rc = call_hfi_op(hdev, session_set_property,
 				inst->session, property_id, &new_buf_count);
-
 		}
 		if (bufreq->buffer_count_actual > *num_buffers)
 			*num_buffers =  bufreq->buffer_count_actual;
@@ -1264,8 +1267,9 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	u32 control_idx = 0;
 	enum hal_property property_id = 0;
 	u32 property_val = 0;
-	void *pdata;
+	void *pdata = NULL;
 	struct hfi_device *hdev;
+	struct hal_extradata_enable extra;
 
 	if (!inst || !inst->core || !inst->core->device) {
 		dprintk(VIDC_ERR, "%s invalid parameters", __func__);
@@ -1328,18 +1332,32 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		pdata = &hal_property;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_SECURE:
-		inst->mode = VIDC_SECURE;
-		dprintk(VIDC_DBG, "Setting secure mode to :%d\n", inst->mode);
+		inst->flags |= VIDC_SECURE;
+		dprintk(VIDC_DBG, "Setting secure mode to: %d\n",
+				!!(inst->flags & VIDC_SECURE));
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA:
-	{
-		struct hal_extradata_enable extra;
 		property_id = HAL_PARAM_INDEX_EXTRADATA;
 		extra.index = msm_comm_get_hal_extradata_index(ctrl->val);
 		extra.enable = 1;
 		pdata = &extra;
 		break;
-	}
+	case V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL:
+		switch (ctrl->val) {
+		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL:
+			inst->flags &= ~VIDC_TURBO;
+			break;
+		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO:
+			inst->flags |= VIDC_TURBO;
+			break;
+		default:
+			dprintk(VIDC_ERR, "Perf mode %x not supported",
+					ctrl->val);
+			rc = -ENOTSUPP;
+			break;
+		}
+
+		break;
 	default:
 		break;
 	}

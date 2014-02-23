@@ -254,7 +254,8 @@ fail_mem_client:
 fail_nomem:
 	return rc;
 }
-static int msm_v4l2_release_output_buffers(struct msm_v4l2_vid_inst *v4l2_inst)
+static int msm_v4l2_release_buffers(struct msm_v4l2_vid_inst *v4l2_inst,
+				int buffer_type)
 {
 	struct list_head *ptr, *next;
 	struct buffer_info *bi;
@@ -264,7 +265,7 @@ static int msm_v4l2_release_output_buffers(struct msm_v4l2_vid_inst *v4l2_inst)
 	int i;
 	list_for_each_safe(ptr, next, &v4l2_inst->registered_bufs) {
 		bi = list_entry(ptr, struct buffer_info, list);
-		if (bi->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		if (bi->type == buffer_type) {
 			buffer_info.type = bi->type;
 			for (i = 0; (i < bi->num_planes)
 				&& (i < VIDEO_MAX_PLANES); i++) {
@@ -310,7 +311,8 @@ static int msm_v4l2_close(struct file *filp)
 	int i;
 	vidc_inst = get_vidc_inst(filp, NULL);
 	v4l2_inst = get_v4l2_inst(filp, NULL);
-	rc = msm_v4l2_release_output_buffers(v4l2_inst);
+	rc = msm_v4l2_release_buffers(v4l2_inst,
+			V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
 	if (rc)
 		dprintk(VIDC_WARN,
 			"Failed in %s for release output buffers\n", __func__);
@@ -383,7 +385,7 @@ int msm_v4l2_reqbufs(struct file *file, void *fh,
 	int rc = 0;
 	v4l2_inst = get_v4l2_inst(file, NULL);
 	if (b->count == 0)
-		rc = msm_v4l2_release_output_buffers(v4l2_inst);
+		rc = msm_v4l2_release_buffers(v4l2_inst, b->type);
 	if (rc)
 		dprintk(VIDC_WARN,
 			"Failed in %s for release output buffers\n", __func__);
@@ -650,7 +652,8 @@ static int msm_v4l2_decoder_cmd(struct file *file, void *fh,
 	int rc = 0;
 	v4l2_inst = get_v4l2_inst(file, NULL);
 	if (dec->cmd == V4L2_DEC_CMD_STOP)
-		rc = msm_v4l2_release_output_buffers(v4l2_inst);
+		rc = msm_v4l2_release_buffers(v4l2_inst,
+				V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
 	if (rc)
 		dprintk(VIDC_WARN,
 			"Failed to release dec output buffers: %d\n", rc);
@@ -665,7 +668,8 @@ static int msm_v4l2_encoder_cmd(struct file *file, void *fh,
 	int rc = 0;
 	v4l2_inst = get_v4l2_inst(file, NULL);
 	if (enc->cmd == V4L2_ENC_CMD_STOP)
-		rc = msm_v4l2_release_output_buffers(v4l2_inst);
+		rc = msm_v4l2_release_buffers(v4l2_inst,
+				V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
 	if (rc)
 		dprintk(VIDC_WARN,
 			"Failed to release enc output buffers: %d\n", rc);
@@ -743,7 +747,7 @@ static size_t get_u32_array_num_elements(struct platform_device *pdev,
 	int len;
 	size_t num_elements = 0;
 	if (!of_get_property(np, name, &len)) {
-		dprintk(VIDC_ERR, "Failed to read %s from device tree\n",
+		dprintk(VIDC_DBG, "Failed to read %s from device tree\n",
 			name);
 		goto fail_read;
 	}
@@ -840,7 +844,7 @@ static int msm_vidc_load_freq_table(struct msm_vidc_platform_resources *res)
 
 	num_elements = get_u32_array_num_elements(pdev, "qcom,load-freq-tbl");
 	if (num_elements == 0) {
-		dprintk(VIDC_ERR, "no elements in frequency table\n");
+		dprintk(VIDC_DBG, "no elements in frequency table\n");
 		return rc;
 	}
 
@@ -1402,7 +1406,7 @@ static int __devinit msm_vidc_probe(struct platform_device *pdev)
 		goto err_v4l2_register;
 	}
 	if (core->hfi_type == VIDC_HFI_Q6) {
-		dprintk(VIDC_ERR, "Q6 hfi device probe called\n");
+		dprintk(VIDC_DBG, "Q6 hfi device probe called\n");
 		nr += MSM_VIDC_MAX_DEVICES;
 	}
 	rc = v4l2_device_register(&pdev->dev, &core->v4l2_dev);

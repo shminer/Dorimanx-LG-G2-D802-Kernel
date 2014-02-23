@@ -44,6 +44,7 @@ static enum vidc_status hfi_map_err_status(int hfi_err)
 	case HFI_ERR_SESSION_UNSUPPORTED_PROPERTY:
 	case HFI_ERR_SESSION_UNSUPPORTED_SETTING:
 	case HFI_ERR_SESSION_INSUFFICIENT_RESOURCES:
+	case HFI_ERR_SESSION_UNSUPPORTED_STREAM:
 		vidc_err = VIDC_ERR_NOT_SUPPORTED;
 		break;
 	case HFI_ERR_SYS_MAX_SESSIONS_REACHED:
@@ -785,6 +786,8 @@ static void hfi_process_session_etb_done(
 	data_done.input_done.offset = pkt->offset;
 	data_done.input_done.filled_len = pkt->filled_len;
 	data_done.input_done.packet_buffer = pkt->packet_buffer;
+	data_done.input_done.status =
+		hfi_map_err_status((u32) pkt->error_type);
 	callback(SESSION_ETB_DONE, &data_done);
 }
 
@@ -1002,7 +1005,6 @@ static void hfi_process_session_end_done(
 		struct hfi_msg_sys_session_end_done_packet *pkt)
 {
 	struct msm_vidc_cb_cmd_done cmd_done;
-	struct hal_session *sess_close;
 
 	dprintk(VIDC_DBG, "RECEIVED:SESSION_END_DONE");
 
@@ -1020,12 +1022,6 @@ static void hfi_process_session_end_done(
 	cmd_done.status = hfi_map_err_status((u32)pkt->error_type);
 	cmd_done.data = NULL;
 	cmd_done.size = 0;
-	sess_close = (struct hal_session *)pkt->session_id;
-	dprintk(VIDC_INFO, "deleted the session: 0x%x",
-		sess_close->session_id);
-	list_del(&sess_close->list);
-	kfree(sess_close);
-	sess_close = NULL;
 	callback(SESSION_END_DONE, &cmd_done);
 }
 
@@ -1034,7 +1030,6 @@ static void hfi_process_session_abort_done(
 	struct hfi_msg_sys_session_abort_done_packet *pkt)
 {
 	struct msm_vidc_cb_cmd_done cmd_done;
-	struct hal_session *sess_close;
 
 	dprintk(VIDC_DBG, "RECEIVED:SESSION_ABORT_DONE");
 
@@ -1052,16 +1047,6 @@ static void hfi_process_session_abort_done(
 	cmd_done.data = NULL;
 	cmd_done.size = 0;
 
-	sess_close = (struct hal_session *)pkt->session_id;
-	if (!sess_close) {
-		dprintk(VIDC_ERR, "%s: invalid session pointer\n", __func__);
-		return;
-	}
-	dprintk(VIDC_ERR, "deleted the session: 0x%x",
-		sess_close->session_id);
-	list_del(&sess_close->list);
-	kfree(sess_close);
-	sess_close = NULL;
 	callback(SESSION_ABORT_DONE, &cmd_done);
 }
 

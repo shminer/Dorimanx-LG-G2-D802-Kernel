@@ -16,9 +16,9 @@
 #define PLATFORM_DRIVER_NAME "msm_camera_imx135"
 #define imx135_obj imx135_##obj
 
-/*                             
-                                  
-                                           
+/* jinw.kim@lge.com, 2013-01-03
+ * G2 Main Camera Bring up(IMX135)
+ * Add function imx135_sensor_power_up&down
  */
 #if defined(CONFIG_MACH_LGE)
 extern int32_t msm_sensor_enable_i2c_mux(struct msm_camera_i2c_conf *i2c_conf);
@@ -34,17 +34,17 @@ static struct camera_vreg_t imx135_vreg_vio = {
 static struct regulator *p_vio;
 #endif
 
-/*                             
-                                  
-                      
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For LGU/AT&T Rev. A
  */
 #if defined(CONFIG_MACH_MSM8974_G2_LGU) || defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_VU3_LGU) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
 #define MAIN_ANA_EN 16
 #endif
 
-/*                             
-                                  
-                  
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For AT&T Rev. A
  */
 #if defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
 #define MAIN_IO_EN 22
@@ -70,9 +70,9 @@ static struct msm_camera_i2c_reg_conf imx135_groupoff_settings[] = {
 };
 
 static struct msm_camera_i2c_reg_conf imx135_recommend_settings[] = {
-/*                                
-                                  
-                                                                   
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
+ * Sony's recommend CLK : 6MHz, 12MHz, 13.5MHz, 18MHz, 24MHz, 27MHz
  */
 #if 1 // 19.2MHz
 /* Recommended global settings */
@@ -485,8 +485,8 @@ static struct msm_camera_i2c_reg_conf imx135_recommend_settings[] = {
 };
 
 static struct msm_camera_i2c_reg_conf imx135_prev_settings[] = {
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #if 1
 /* Clock Setting */
@@ -1231,8 +1231,8 @@ static struct msm_camera_i2c_reg_conf imx135_LSCTable_settings[] = {
 };
 
 static struct msm_camera_i2c_reg_conf imx135_snap_settings[] = {
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #if 1 // 19.2MHz
 /* Clock Setting */
@@ -1461,8 +1461,8 @@ static struct msm_camera_i2c_reg_conf imx135_snap_settings[] = {
 };
 
 static struct msm_camera_i2c_reg_conf imx135_hdr_settings[] = {
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #if 1 // 19.2MHz
 /* Clock Setting */
@@ -1719,8 +1719,8 @@ static struct msm_camera_i2c_conf_array imx135_confs[] = {
 };
 
 static struct msm_sensor_output_info_t imx135_dimensions[] = {
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #if 1
 	/* RES0 snapshot(FULL SIZE) */
@@ -1796,8 +1796,8 @@ static struct msm_sensor_output_reg_addr_t imx135_reg_addr = {
 
 static struct msm_sensor_id_info_t imx135_id_info = {
 	.sensor_id_reg_addr = 0x0000,
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #if 1
 	.sensor_id = 0x0000,
@@ -1829,8 +1829,8 @@ static struct msm_camera_i2c_client imx135_sensor_i2c_client = {
 	.addr_type = MSM_CAMERA_I2C_WORD_ADDR,
 };
 
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #ifdef CONFIG_MACH_LGE
 static const struct of_device_id imx135_dt_match[] = {
@@ -1856,11 +1856,11 @@ static int32_t imx135_platform_probe(struct platform_device *pdev)
 	rc = msm_sensor_platform_probe(pdev, match->data);
 	return rc;
 }
-#endif /*                 */
+#endif /* CONFIG_MACH_LGE */
 static int __init msm_sensor_init_module(void)
 {
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #ifdef CONFIG_MACH_LGE
 	int32_t rc = 0;
@@ -1871,8 +1871,8 @@ static int __init msm_sensor_init_module(void)
 #endif
 	return i2c_add_driver(&imx135_i2c_driver);
 }
-/*                                
-                                  
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135)
  */
 #ifdef CONFIG_MACH_LGE
 static void __exit msm_sensor_exit_module(void)
@@ -1900,9 +1900,9 @@ static struct v4l2_subdev_ops imx135_subdev_ops = {
 	.video  = &imx135_subdev_video_ops,
 };
 
-/*                             
-                                  
-                                           
+/* jinw.kim@lge.com, 2013-01-03
+ * G2 Main Camera Bring up(IMX135)
+ * Add function imx135_sensor_power_up&down
  */
 #if defined(CONFIG_MACH_LGE)
 static struct msm_cam_clk_info cam_8960_clk_info[] = {
@@ -1961,9 +1961,9 @@ int32_t imx135_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 		goto enable_vreg_failed;
 	}
 
-/*                             
-                                  
-                      
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For LGU/AT&T Rev. A
  */
 #if defined(CONFIG_MACH_MSM8974_G2_LGU) || defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_VU3_LGU) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
 	CDBG("%s: Turning on VANA\n", __func__);
@@ -1976,9 +1976,9 @@ int32_t imx135_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 	gpio_direction_output(MAIN_ANA_EN, 1);
 #endif
 
-/*                             
-                                  
-                  
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For AT&T Rev. A
  */
 #if defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
 	CDBG("%s: Turning on VIO\n", __func__);
@@ -2081,9 +2081,9 @@ enable_vio_failed:
 		p_vio = NULL;
 	}
 #endif
-/*                             
-                                  
-                      
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For LGU/AT&T Rev. A
  */
 enable_vana_failed:
 #if defined(CONFIG_MACH_MSM8974_G2_LGU) || defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_VU3_LGU) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
@@ -2147,9 +2147,9 @@ int32_t imx135_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 		s_ctrl->num_vreg_seq,
 		s_ctrl->reg_ptr, 0);
 
-/*                             
-                                  
-                      
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For LGU/AT&T Rev. A
  */
 #if defined(CONFIG_MACH_MSM8974_G2_LGU) || defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_VU3_LGU) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
 	CDBG("%s: Turning off VANA\n", __func__);
@@ -2157,9 +2157,9 @@ int32_t imx135_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 	gpio_free(MAIN_ANA_EN);
 #endif
 
-/*                             
-                                  
-                  
+/* jinw.kim@lge.com, 2013-01-12
+ * G2 Main Camera Bring up(IMX135)
+ * For AT&T Rev. A
  */
 #if defined(CONFIG_MACH_MSM8974_G2_ATT) || defined(CONFIG_MACH_MSM8974_G2_TEL_AU)
 	CDBG("%s: Turning off VIO\n", __func__);
@@ -2188,7 +2188,7 @@ int32_t imx135_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 
 	return 0;
 }
-#endif	/*                 */
+#endif	/* CONFIG_MACH_LGE */
 
 int32_t imx135_write_exp_gain(struct msm_sensor_ctrl_t *s_ctrl,
 		uint16_t gain, uint32_t line)
@@ -2201,9 +2201,9 @@ int32_t imx135_write_exp_gain(struct msm_sensor_ctrl_t *s_ctrl,
 	if (line > (fl_lines - offset))
 		fl_lines = line + offset;
 
-/*                                
-                                                
-                                             
+/* soojung.lim@lge.com, 2012-12-07
+ * G2 Main Camera Bring up(IMX135) - temporarily
+ * Need to be changed for AE working normally
  */
 #ifdef CONFIG_MACH_LGE
 	return 0;
@@ -2237,9 +2237,9 @@ static struct msm_sensor_fn_t imx135_func_tbl = {
 	.sensor_mode_init = msm_sensor_mode_init,
 	.sensor_get_output_info = msm_sensor_get_output_info,
 	.sensor_config = msm_sensor_config,
-/*                             
-                                  
-                                           
+/* jinw.kim@lge.com, 2013-01-03
+ * G2 Main Camera Bring up(IMX135)
+ * Add function imx135_sensor_power_up&down
  */
 #if defined(CONFIG_MACH_LGE)
 	.sensor_power_up = imx135_sensor_power_up,

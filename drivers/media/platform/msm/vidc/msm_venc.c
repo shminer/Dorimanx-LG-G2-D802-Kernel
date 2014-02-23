@@ -109,6 +109,12 @@ static const char *const mpeg_video_vidc_extradata[] = {
 	"Extradata aspect ratio",
 };
 
+static const char *const perf_level[] = {
+	"Nominal",
+	"Performance",
+	"Turbo"
+};
+
 enum msm_venc_ctrl_cluster {
 	MSM_VENC_CTRL_CLUSTER_QP = 1 << 0,
 	MSM_VENC_CTRL_CLUSTER_INTRA_PERIOD = 1 << 1,
@@ -124,18 +130,6 @@ enum msm_venc_ctrl_cluster {
 };
 
 static struct msm_vidc_ctrl msm_venc_ctrls[] = {
-	{
-		.id = V4L2_CID_MPEG_VIDC_VIDEO_FRAME_RATE,
-		.name = "Frame Rate",
-		.type = V4L2_CTRL_TYPE_INTEGER,
-		.minimum = MIN_FRAME_RATE,
-		.maximum = MAX_FRAME_RATE,
-		.default_value = MIN_FRAME_RATE,
-		.step = 1,
-		.menu_skip_mask = 0,
-		.qmenu = NULL,
-		.cluster = MSM_VENC_CTRL_CLUSTER_TIMING,
-	},
 	{
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_IDR_PERIOD,
 		.name = "IDR Period",
@@ -677,6 +671,31 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 		.default_value =
 			V4L2_MPEG_VIDC_VIDEO_H264_AU_DELIMITER_DISABLED,
 	},
+	{
+		.id = V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL,
+		.name = "Encoder Performance Level",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.minimum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
+		.maximum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO,
+		.default_value = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
+		.menu_skip_mask = ~(
+			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL) |
+			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO)),
+		.qmenu = perf_level,
+		.step = 0,
+	},
+	{
+		.id = V4L2_CID_MPEG_VIDEO_CYCLIC_INTRA_REFRESH_MB,
+		.name = "Intra Refresh CIR MBS",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.minimum = 0,
+		.maximum = MAX_INTRA_REFRESH_MBS,
+		.default_value = 0,
+		.step = 1,
+		.menu_skip_mask = 0,
+		.qmenu = NULL,
+		.cluster = MSM_VENC_CTRL_CLUSTER_INTRA_REFRESH,
+	}
 };
 
 #define NUM_CTRLS ARRAY_SIZE(msm_venc_ctrls)
@@ -951,6 +970,7 @@ static int msm_venc_stop_streaming(struct vb2_queue *q)
 		rc = -EINVAL;
 		break;
 	}
+
 	mutex_lock(&inst->core->sync_lock);
 	msm_comm_scale_clocks_and_bus(inst);
 	mutex_unlock(&inst->core->sync_lock);
@@ -1160,7 +1180,6 @@ unknown_value:
 static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 {
 	int rc = 0;
-	struct hal_frame_rate frame_rate;
 	struct hal_request_iframe request_iframe;
 	struct hal_bitrate bitrate;
 	struct hal_profile_level profile_level;
@@ -1179,6 +1198,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	void *pdata = NULL;
 	struct v4l2_ctrl *temp_ctrl = NULL;
 	struct hfi_device *hdev;
+	struct hal_extradata_enable extra;
 
 	if (!inst || !inst->core || !inst->core->device) {
 		dprintk(VIDC_ERR, "%s invalid parameters", __func__);
@@ -1202,13 +1222,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	})
 
 	switch (ctrl->id) {
-	case V4L2_CID_MPEG_VIDC_VIDEO_FRAME_RATE:
-		property_id =
-			HAL_CONFIG_FRAME_RATE;
-		frame_rate.frame_rate = ctrl->val;
-		frame_rate.buffer_type = HAL_BUFFER_OUTPUT;
-		pdata = &frame_rate;
-		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_IDR_PERIOD:
 		property_id =
 			HAL_CONFIG_VENC_IDR_PERIOD;
@@ -1639,8 +1652,8 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
 		cir_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS);
 
-		property_id =
-			HAL_PARAM_VENC_INTRA_REFRESH;
+		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
+
 		intra_refresh.air_mbs = ctrl->val;
 		intra_refresh.mode = ir_mode->val;
 		intra_refresh.air_ref = air_ref->val;
@@ -1656,8 +1669,8 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
 		cir_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS);
 
-		property_id =
-			HAL_PARAM_VENC_INTRA_REFRESH;
+		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
+
 		intra_refresh.air_ref = ctrl->val;
 		intra_refresh.air_mbs = air_mbs->val;
 		intra_refresh.mode = ir_mode->val;
@@ -1674,13 +1687,28 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
 		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
 
-		property_id =
-			HAL_PARAM_VENC_INTRA_REFRESH;
+		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
 
 		intra_refresh.cir_mbs = ctrl->val;
 		intra_refresh.air_mbs = air_mbs->val;
 		intra_refresh.air_ref = air_ref->val;
 		intra_refresh.mode = ir_mode->val;
+
+		pdata = &intra_refresh;
+		break;
+	}
+	case V4L2_CID_MPEG_VIDEO_CYCLIC_INTRA_REFRESH_MB: {
+		struct v4l2_ctrl *air_mbs, *air_ref;
+
+		air_mbs = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS);
+		air_ref = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF);
+
+		property_id = HAL_PARAM_VENC_INTRA_REFRESH;
+
+		intra_refresh.cir_mbs = ctrl->val;
+		intra_refresh.air_mbs = air_mbs->val;
+		intra_refresh.air_ref = air_ref->val;
+		intra_refresh.mode = HAL_INTRA_REFRESH_CYCLIC;
 
 		pdata = &intra_refresh;
 		break;
@@ -1722,18 +1750,16 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		pdata = &enable;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_SECURE:
-		inst->mode = VIDC_SECURE;
-		dprintk(VIDC_INFO, "Setting secure mode to :%d\n", inst->mode);
+		inst->flags |= VIDC_SECURE;
+		dprintk(VIDC_INFO, "Setting secure mode to: %d\n",
+				!!(inst->flags & VIDC_SECURE));
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA:
-	{
-		struct hal_extradata_enable extra;
 		property_id = HAL_PARAM_INDEX_EXTRADATA;
 		extra.index = msm_comm_get_hal_extradata_index(ctrl->val);
 		extra.enable = 1;
 		pdata = &extra;
 		break;
-	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO:
 	{
 		struct v4l2_ctrl *rc_mode;
@@ -1759,7 +1785,6 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		case V4L2_MPEG_VIDC_VIDEO_H264_VUI_TIMING_INFO_ENABLED:
 			vui_timing_info.enable = 1;
 			vui_timing_info.fixed_frame_rate = cfr;
-		//	vui_timing_info.time_scale = inst->prop.fps;
 			vui_timing_info.time_scale = NSEC_PER_SEC;
 		}
 
@@ -1782,6 +1807,22 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		}
 
 		pdata = &enable;
+		break;
+	case V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL:
+		switch (ctrl->val) {
+		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL:
+			inst->flags &= ~VIDC_TURBO;
+			break;
+		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO:
+			inst->flags |= VIDC_TURBO;
+			break;
+		default:
+			dprintk(VIDC_ERR, "Perf mode %x not supported",
+					ctrl->val);
+			rc = -ENOTSUPP;
+			break;
+		}
+
 		break;
 	default:
 		rc = -ENOTSUPP;
@@ -1860,7 +1901,6 @@ int msm_venc_inst_init(struct msm_vidc_inst *inst)
 	inst->fmts[OUTPUT_PORT] = &venc_formats[0];
 	inst->prop.height = DEFAULT_HEIGHT;
 	inst->prop.width = DEFAULT_WIDTH;
-	//inst->prop.fps = 30;
 	inst->prop.fps = 15;
 	return rc;
 }
@@ -1963,7 +2003,6 @@ int msm_venc_s_parm(struct msm_vidc_inst *inst, struct v4l2_streamparm *a)
 {
 	u32 property_id = 0, us_per_frame = 0;
 	void *pdata;
-	//int rc = 0, fps = 0, rem = 0;
 	int rc = 0, fps = 0;
 	struct hal_frame_rate frame_rate;
 	struct hfi_device *hdev;
@@ -2001,12 +2040,6 @@ int msm_venc_s_parm(struct msm_vidc_inst *inst, struct v4l2_streamparm *a)
 	}
 
 	fps = USEC_PER_SEC;
-//	rem = do_div(fps, us_per_frame);
-//	if (rem) {
-		/* Effectively fps = ceil((float)USEC_PER_SEC/us_per_frame) */
-//		fps++;
-//	}
-
 	do_div(fps, us_per_frame);
 
 	if ((fps % 15 == 14) || (fps % 24 == 23))
