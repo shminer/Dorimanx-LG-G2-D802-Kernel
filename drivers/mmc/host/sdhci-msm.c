@@ -89,6 +89,7 @@
 
 #define CORE_VENDOR_SPEC	0x10C
 #define CORE_CLK_PWRSAVE	(1 << 1)
+#define CORE_HC_AUTO_CMD21_EN	(1 << 6)
 #define CORE_IO_PAD_PWR_SWITCH	(1 << 16)
 
 #define CORE_MCI_DATA_CTRL	0x2C
@@ -274,6 +275,8 @@ struct sdhci_msm_host {
 	struct completion pwr_irq_completion;
 	struct sdhci_msm_bus_vote msm_bus_vote;
 	u32 clk_rate; /* Keeps track of current clock rate that is set */
+	bool en_auto_cmd21;
+	struct device_attribute auto_cmd21_attr;
 };
 
 enum vdd_io_level {
@@ -323,6 +326,93 @@ static inline int msm_dll_poll_ck_out_en(struct sdhci_host *host,
 				CORE_DLL_CONFIG) & CORE_CK_OUT_EN);
 	}
 out:
+	return rc;
+}
+
+/*
+ * Enable CDR to track changes of DAT lines and adjust sampling
+ * point according to voltage/temperature variations
+ */
+static int msm_enable_cdr_cm_sdc4_dll(struct sdhci_host *host)
+{
+	int rc = 0;
+	u32 config;
+
+	config = readl_relaxed(host->ioaddr + CORE_DLL_CONFIG);
+	config |= CORE_CDR_EN;
+	config &= ~(CORE_CDR_EXT_EN | CORE_CK_OUT_EN);
+	writel_relaxed(config, host->ioaddr + CORE_DLL_CONFIG);
+
+	rc = msm_dll_poll_ck_out_en(host, 0);
+	if (rc)
+		goto err;
+
+	writel_relaxed((readl_relaxed(host->ioaddr + CORE_DLL_CONFIG) |
+			CORE_CK_OUT_EN), host->ioaddr + CORE_DLL_CONFIG);
+
+	rc = msm_dll_poll_ck_out_en(host, 1);
+	if (rc)
+		goto err;
+	goto out;
+err:
+	pr_err("%s: %s: failed\n", mmc_hostname(host->mmc), __func__);
+out:
+	return rc;
+}
+
+static ssize_t store_auto_cmd21(struct device *dev, struct device_attribute
+				*attr, const char *buf, size_t count)
+{
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+	u32 tmp;
+	unsigned long flags;
+
+	if (!kstrtou32(buf, 0, &tmp)) {
+		spin_lock_irqsave(&host->lock, flags);
+		msm_host->en_auto_cmd21 = !!tmp;
+		spin_unlock_irqrestore(&host->lock, flags);
+	}
+	return count;
+}
+
+static ssize_t show_auto_cmd21(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", msm_host->en_auto_cmd21);
+}
+
+/* MSM auto-tuning handler */
+static int sdhci_msm_config_auto_tuning_cmd(struct sdhci_host *host,
+					    bool enable,
+					    u32 type)
+{
+	int rc = 0;
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_msm_host *msm_host = pltfm_host->priv;
+	u32 val = 0;
+
+	if (!msm_host->en_auto_cmd21)
+		return 0;
+
+	if (type == MMC_SEND_TUNING_BLOCK_HS200)
+		val = CORE_HC_AUTO_CMD21_EN;
+	else
+		return 0;
+
+	if (enable) {
+		rc = msm_enable_cdr_cm_sdc4_dll(host);
+		writel_relaxed(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) |
+			       val, host->ioaddr + CORE_VENDOR_SPEC);
+	} else {
+		writel_relaxed(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) &
+			       ~val, host->ioaddr + CORE_VENDOR_SPEC);
+	}
 	return rc;
 }
 
@@ -530,19 +620,25 @@ static int msm_init_cm_dll(struct sdhci_host *host)
 	int rc = 0;
 	unsigned long flags;
 	u32 wait_cnt;
+	bool prev_pwrsave, curr_pwrsave;
 
 	pr_debug("%s: Enter %s\n", mmc_hostname(mmc), __func__);
 	spin_lock_irqsave(&host->lock, flags);
-
+	prev_pwrsave = !!(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) &
+			  CORE_CLK_PWRSAVE);
+	curr_pwrsave = prev_pwrsave;
 	/*
 	 * Make sure that clock is always enabled when DLL
 	 * tuning is in progress. Keeping PWRSAVE ON may
 	 * turn off the clock. So let's disable the PWRSAVE
 	 * here and re-enable it once tuning is completed.
 	 */
-	writel_relaxed((readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
-			& ~CORE_CLK_PWRSAVE),
-			host->ioaddr + CORE_VENDOR_SPEC);
+	if (prev_pwrsave) {
+		writel_relaxed((readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
+				& ~CORE_CLK_PWRSAVE),
+				host->ioaddr + CORE_VENDOR_SPEC);
+		curr_pwrsave = false;
+	}
 
 	/* Write 1 to DLL_RST bit of DLL_CONFIG register */
 	writel_relaxed((readl_relaxed(host->ioaddr + CORE_DLL_CONFIG)
@@ -585,10 +681,18 @@ static int msm_init_cm_dll(struct sdhci_host *host)
 	}
 
 out:
-	/* re-enable PWRSAVE */
-	writel_relaxed((readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) |
-			CORE_CLK_PWRSAVE),
-			host->ioaddr + CORE_VENDOR_SPEC);
+	/* Restore the correct PWRSAVE state */
+	if (prev_pwrsave ^ curr_pwrsave) {
+		u32 reg = readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC);
+
+		if (prev_pwrsave)
+			reg |= CORE_CLK_PWRSAVE;
+		else
+			reg &= ~CORE_CLK_PWRSAVE;
+
+		writel_relaxed(reg, host->ioaddr + CORE_VENDOR_SPEC);
+	}
+
 	spin_unlock_irqrestore(&host->lock, flags);
 	pr_debug("%s: Exit %s\n", mmc_hostname(mmc), __func__);
 	return rc;
@@ -597,6 +701,7 @@ out:
 int sdhci_msm_execute_tuning(struct sdhci_host *host, u32 opcode)
 {
 	unsigned long flags;
+	int tuning_seq_cnt = 3;
 	u8 phase, *data_buf, tuned_phases[16], tuned_phase_cnt = 0;
 	const u32 *tuning_block_pattern = tuning_block_64;
 	int size = sizeof(tuning_block_64); /* Tuning pattern size in bytes */
@@ -623,16 +728,17 @@ int sdhci_msm_execute_tuning(struct sdhci_host *host, u32 opcode)
 	}
 	spin_unlock_irqrestore(&host->lock, flags);
 
-	/* first of all reset the tuning block */
-	rc = msm_init_cm_dll(host);
-	if (rc)
-		goto out;
-
 	data_buf = kmalloc(size, GFP_KERNEL);
 	if (!data_buf) {
 		rc = -ENOMEM;
 		goto out;
 	}
+
+retry:
+	/* first of all reset the tuning block */
+	rc = msm_init_cm_dll(host);
+	if (rc)
+		goto kfree;
 
 	phase = 0;
 	do {
@@ -690,10 +796,12 @@ int sdhci_msm_execute_tuning(struct sdhci_host *host, u32 opcode)
 		pr_debug("%s: %s: finally setting the tuning phase to %d\n",
 				mmc_hostname(mmc), __func__, phase);
 	} else {
+		if (--tuning_seq_cnt)
+			goto retry;
 		/* tuning failed */
 		pr_err("%s: %s: no tuning point found\n",
 			mmc_hostname(mmc), __func__);
-		rc = -EAGAIN;
+		rc = -EIO;
 	}
 
 kfree:
@@ -2035,6 +2143,7 @@ static void sdhci_msm_set_clock(struct sdhci_host *host, unsigned int clock)
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
 	struct mmc_ios	curr_ios = host->mmc->ios;
 	u32 sup_clock, ddr_clock;
+	bool curr_pwrsave;
 
 	if (!clock) {
 		sdhci_msm_prepare_clocks(host, false);
@@ -2045,6 +2154,22 @@ static void sdhci_msm_set_clock(struct sdhci_host *host, unsigned int clock)
 	rc = sdhci_msm_prepare_clocks(host, true);
 	if (rc)
 		return;
+
+	curr_pwrsave = !!(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) &
+			  CORE_CLK_PWRSAVE);
+	if ((clock > 400000) &&
+	    !curr_pwrsave && mmc_host_may_gate_card(host->mmc->card))
+		writel_relaxed(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
+				| CORE_CLK_PWRSAVE,
+				host->ioaddr + CORE_VENDOR_SPEC);
+	/*
+	 * Disable pwrsave for a newly added card if doesn't allow clock
+	 * gating.
+	 */
+	else if (curr_pwrsave && !mmc_host_may_gate_card(host->mmc->card))
+		writel_relaxed(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
+				& ~CORE_CLK_PWRSAVE,
+				host->ioaddr + CORE_VENDOR_SPEC);
 
 	sup_clock = sdhci_msm_get_sup_clk_rate(host, clock);
 	if (curr_ios.timing == MMC_TIMING_UHS_DDR50) {
@@ -2169,6 +2294,7 @@ static struct sdhci_ops sdhci_msm_ops = {
 	.get_min_clock = sdhci_msm_get_min_clock,
 	.get_max_clock = sdhci_msm_get_max_clock,
 	.disable_data_xfer = sdhci_msm_disable_data_xfer,
+	.config_auto_tuning_cmd = sdhci_msm_config_auto_tuning_cmd,
 };
 
 static int __devinit sdhci_msm_probe(struct platform_device *pdev)
@@ -2416,6 +2542,7 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 #ifndef CONFIG_MACH_MSM8974_EMMC_HW_RESET
 	msm_host->mmc->caps |= MMC_CAP_HW_RESET;
 #endif
+
 	msm_host->mmc->caps2 |= msm_host->pdata->caps2;
 	msm_host->mmc->caps2 |= MMC_CAP2_CORE_RUNTIME_PM;
 	msm_host->mmc->caps2 |= MMC_CAP2_PACKED_WR;
@@ -2481,6 +2608,18 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 		       mmc_hostname(host->mmc), __func__, ret);
 	else
 		pm_runtime_enable(&pdev->dev);
+
+	msm_host->auto_cmd21_attr.show = show_auto_cmd21;
+	msm_host->auto_cmd21_attr.store = store_auto_cmd21;
+	sysfs_attr_init(&msm_host->auto_cmd21_attr.attr);
+	msm_host->auto_cmd21_attr.attr.name = "enable_auto_cmd21";
+	msm_host->auto_cmd21_attr.attr.mode = S_IRUGO | S_IWUSR;
+	ret = device_create_file(&pdev->dev, &msm_host->auto_cmd21_attr);
+	if (ret) {
+		pr_err("%s: %s: failed creating auto-cmd21 attr: %d\n",
+		       mmc_hostname(host->mmc), __func__, ret);
+		device_remove_file(&pdev->dev, &msm_host->auto_cmd21_attr);
+	}
 
 	/* Successful initialization */
 

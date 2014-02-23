@@ -1368,7 +1368,7 @@ static int mmc_blk_issue_sanitize_rq(struct mmc_queue *mq,
 	pr_debug("%s: %s - SANITIZE IN PROGRESS...\n",
 		mmc_hostname(card->host), __func__);
 
-	err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+	err = mmc_switch_ignore_timeout(card, EXT_CSD_CMD_SET_NORMAL,
 					EXT_CSD_SANITIZE_START, 1,
 					MMC_SANITIZE_REQ_TIMEOUT);
 
@@ -1652,6 +1652,13 @@ static int mmc_blk_update_interrupted_req(struct mmc_card *card,
 		 ext_csd[EXT_CSD_CORRECTLY_PRG_SECTORS_NUM + 1] << 8 |
 		 ext_csd[EXT_CSD_CORRECTLY_PRG_SECTORS_NUM + 2] << 16 |
 		 ext_csd[EXT_CSD_CORRECTLY_PRG_SECTORS_NUM + 3] << 24);
+
+	/*
+	 * skip packed command header (1 sector) included by the counter but not
+	 * actually written to the NAND
+	 */
+	if (correctly_done >= card->ext_csd.data_sector_size)
+		correctly_done -= card->ext_csd.data_sector_size;
 
 	list_for_each_entry(prq, &mq_rq->packed_list, queuelist) {
 		if ((correctly_done - (int)blk_rq_bytes(prq)) < 0) {
@@ -3143,11 +3150,11 @@ static void mmc_blk_shutdown(struct mmc_card *card)
 
 	/* Silent the block layer */
 	if (md) {
-		rc = mmc_queue_suspend(&md->queue);
+		rc = mmc_queue_suspend(&md->queue, 1);
 		if (rc)
 			goto suspend_error;
 		list_for_each_entry(part_md, &md->part, part) {
-			rc = mmc_queue_suspend(&part_md->queue);
+			rc = mmc_queue_suspend(&part_md->queue, 1);
 			if (rc)
 				goto suspend_error;
 		}
@@ -3174,11 +3181,11 @@ static int mmc_blk_suspend(struct mmc_card *card)
 	int rc = 0;
 
 	if (md) {
-		rc = mmc_queue_suspend(&md->queue);
+		rc = mmc_queue_suspend(&md->queue, 0);
 		if (rc)
 			goto out;
 		list_for_each_entry(part_md, &md->part, part) {
-			rc = mmc_queue_suspend(&part_md->queue);
+			rc = mmc_queue_suspend(&part_md->queue, 0);
 			if (rc)
 				goto out_resume;
 		}

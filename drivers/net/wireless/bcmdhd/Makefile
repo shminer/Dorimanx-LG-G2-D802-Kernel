@@ -116,6 +116,11 @@ DHDCFLAGS += -DWL_ENABLE_P2P_IF
 #DHDCFLAGS += -DMULTIPLE_SUPPLICANT
 DHDCFLAGS += -DWL_CFG80211_STA_EVENT
 
+#20131129, yeongsu.wu, broadcom patch for not going to sleep while scanning
+ifeq ($(CONFIG_HAS_WAKELOCK),)
+  DHDCFLAGS += -DCONFIG_HAS_WAKELOCK
+endif
+
 #################
 # JellyBean Plus
 #################
