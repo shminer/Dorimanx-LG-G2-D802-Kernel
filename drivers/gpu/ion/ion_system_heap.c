@@ -88,6 +88,7 @@ static struct page *alloc_buffer_page(struct ion_system_heap *heap,
 		}
 		sg_init_table(&sg, 1);
 		sg_set_page(&sg, page, PAGE_SIZE << order, 0);
+		sg_dma_address(&sg) = sg_phys(&sg);
 		dma_sync_sg_for_device(NULL, &sg, 1, DMA_BIDIRECTIONAL);
 	}
 	if (!page)
@@ -138,8 +139,10 @@ static struct page_info *alloc_largest_available(struct ion_system_heap *heap,
 			continue;
 
 		info = kmalloc(sizeof(struct page_info), GFP_KERNEL);
-		info->page = page;
-		info->order = orders[i];
+		if (info) {
+			info->page = page;
+			info->order = orders[i];
+		}
 		return info;
 	}
 	return NULL;
