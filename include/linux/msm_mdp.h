@@ -50,7 +50,7 @@
 #define MSMFB_HISTOGRAM_START	_IOR(MSMFB_IOCTL_MAGIC, 144, \
 						struct mdp_histogram_start_req)
 #define MSMFB_HISTOGRAM_STOP	_IOR(MSMFB_IOCTL_MAGIC, 145, unsigned int)
-#define MSMFB_NOTIFY_UPDATE	_IOW(MSMFB_IOCTL_MAGIC, 146, unsigned int)
+#define MSMFB_NOTIFY_UPDATE	_IOWR(MSMFB_IOCTL_MAGIC, 146, unsigned int)
 
 #define MSMFB_OVERLAY_3D       _IOWR(MSMFB_IOCTL_MAGIC, 147, \
 						struct msmfb_overlay_3d)
@@ -78,6 +78,8 @@
 #define MSMFB_METADATA_GET  _IOW(MSMFB_IOCTL_MAGIC, 166, struct msmfb_metadata)
 #define MSMFB_WRITEBACK_SET_MIRRORING_HINT _IOW(MSMFB_IOCTL_MAGIC, 167, \
 						unsigned int)
+
+#define MSMFB_ASYNC_BLIT              _IOW(MSMFB_IOCTL_MAGIC, 168, unsigned int)
 #define MSMFB_INVERT_PANEL  _IOW(MSMFB_IOCTL_MAGIC, 168, unsigned int)
 
 #if defined(CONFIG_LGE_BROADCAST_TDMB) || defined(CONFIG_LGE_BROADCAST_ONESEG) || defined (LGE_BROADCAST_ONESEG)
@@ -92,6 +94,12 @@
 enum {
 	NOTIFY_UPDATE_START,
 	NOTIFY_UPDATE_STOP,
+};
+
+enum {
+	NOTIFY_TYPE_NO_UPDATE,
+	NOTIFY_TYPE_SUSPEND,
+	NOTIFY_TYPE_UPDATE,
 };
 
 enum {
@@ -612,6 +620,7 @@ struct mdp_calib_config_data {
 #define MDSS_AD_MODE_AUTO_STR	0x1
 #define MDSS_AD_MODE_TARG_STR	0x3
 #define MDSS_AD_MODE_MAN_STR	0x7
+#define MDSS_AD_MODE_CALIB	0xF
 
 #define MDP_PP_AD_INIT	0x10
 #define MDP_PP_AD_CFG	0x20
@@ -639,6 +648,8 @@ struct mdss_ad_init {
 	uint32_t *bl_lin_inv;
 };
 
+#define MDSS_AD_BL_CTRL_MODE_EN 1
+#define MDSS_AD_BL_CTRL_MODE_DIS 0
 struct mdss_ad_cfg {
 	uint32_t mode;
 	uint32_t al_calib_lut[33];
@@ -651,6 +662,7 @@ struct mdss_ad_cfg {
 	uint8_t strength_limit;
 	uint8_t t_filter_recursion;
 	uint16_t stab_itr;
+	uint32_t bl_ctrl_mode;
 };
 
 /* ops uses standard MDP_PP_* flags */
@@ -668,10 +680,12 @@ struct mdss_ad_input {
 	union {
 		uint32_t amb_light;
 		uint32_t strength;
+		uint32_t calib_bl;
 	} in;
 	uint32_t output;
 };
 
+#define MDSS_CALIB_MODE_BL	0x1
 struct mdss_calib_cfg {
 	uint32_t ops;
 	uint32_t calib_mask;
@@ -770,6 +784,12 @@ struct mdp_buf_sync {
 	uint32_t acq_fen_fd_cnt;
 	int *acq_fen_fd;
 	int *rel_fen_fd;
+};
+
+struct mdp_async_blit_req_list {
+	struct mdp_buf_sync sync;
+	uint32_t count;
+	struct mdp_blit_req req[];
 };
 
 #define MDP_DISPLAY_COMMIT_OVERLAY	1
