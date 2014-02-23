@@ -120,6 +120,7 @@ struct mdss_data_type {
 
 	struct early_suspend early_suspend;
 	void *debug_data;
+	int current_bus_idx;
 };
 extern struct mdss_data_type *mdss_res;
 
@@ -142,6 +143,7 @@ int mdss_register_irq(struct mdss_hw *hw);
 void mdss_enable_irq(struct mdss_hw *hw);
 void mdss_disable_irq(struct mdss_hw *hw);
 void mdss_disable_irq_nosync(struct mdss_hw *hw);
+void mdss_bus_bandwidth_ctrl(int enable);
 
 static inline struct ion_client *mdss_get_ionclient(void)
 {

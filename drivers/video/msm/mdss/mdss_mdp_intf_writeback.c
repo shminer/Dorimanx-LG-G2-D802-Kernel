@@ -17,9 +17,6 @@
 #include "mdss_mdp.h"
 #include "mdss_mdp_rotator.h"
 
-/* wait for at most 2 vsync for lowest refresh rate (24hz) */
-#define KOFF_TIMEOUT msecs_to_jiffies(84)
-
 enum mdss_mdp_writeback_type {
 	MDSS_MDP_WRITEBACK_TYPE_ROTATOR,
 	MDSS_MDP_WRITEBACK_TYPE_LINE,
@@ -347,9 +344,9 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 	if (ctx->comp_cnt == 0)
 		return rc;
 
-	rc = wait_for_completion_interruptible_timeout(&ctx->wb_comp,
+	rc = wait_for_completion_timeout(&ctx->wb_comp,
 			KOFF_TIMEOUT);
-	if (rc <= 0) {
+	if (rc == 0) {
 		rc = -ENODEV;
 		WARN(1, "writeback kickoff timed out (%d) ctl=%d\n",
 						rc, ctl->num);

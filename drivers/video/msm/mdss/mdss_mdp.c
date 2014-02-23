@@ -73,6 +73,7 @@ struct msm_mdp_interface mdp5 = {
 
 static DEFINE_SPINLOCK(mdp_lock);
 static DEFINE_MUTEX(mdp_clk_lock);
+static DEFINE_MUTEX(bus_bw_lock);
 
 #define MDP_BUS_VECTOR_ENTRY(ab_val, ib_val)		\
 	{						\
@@ -345,7 +346,6 @@ static void mdss_mdp_bus_scale_unregister(struct mdss_data_type *mdata)
 
 int mdss_mdp_bus_scale_set_quota(u64 ab_quota, u64 ib_quota)
 {
-	static int current_bus_idx;
 	int bus_idx;
 
 	if (mdss_res->bus_hdl < 1) {
@@ -359,9 +359,10 @@ int mdss_mdp_bus_scale_set_quota(u64 ab_quota, u64 ib_quota)
 		int num_cases = mdp_bus_scale_table.num_usecases;
 		struct msm_bus_vectors *vect = NULL;
 
-		bus_idx = (current_bus_idx % (num_cases - 1)) + 1;
+		bus_idx = (mdss_res->current_bus_idx % (num_cases - 1)) + 1;
 
-		vect = mdp_bus_scale_table.usecase[current_bus_idx].vectors;
+		vect = mdp_bus_scale_table.usecase[mdss_res->current_bus_idx].
+			vectors;
 
 		/* avoid performing updates for small changes */
 		if ((ALIGN(ab_quota, SZ_64M) == ALIGN(vect->ab, SZ_64M)) &&
@@ -377,7 +378,7 @@ int mdss_mdp_bus_scale_set_quota(u64 ab_quota, u64 ib_quota)
 		pr_debug("bus scale idx=%d ab=%llu ib=%llu\n", bus_idx,
 				vect->ab, vect->ib);
 	}
-	current_bus_idx = bus_idx;
+	mdss_res->current_bus_idx = bus_idx;
 	return msm_bus_scale_client_update_request(mdss_res->bus_hdl, bus_idx);
 }
 
@@ -595,9 +596,58 @@ unsigned long mdss_mdp_get_clk_rate(u32 clk_idx)
 	return clk_rate;
 }
 
+/**
+ * mdss_bus_bandwidth_ctrl() -- place bus bandwidth request
+ * @enable:	value of enable or disable
+ *
+ * Function place bus bandwidth request to allocate saved bandwidth
+ * if enabled or free bus bandwidth allocation if disabled.
+ * Bus bandwidth is required by mdp.For dsi, it only requires to send
+ * dcs coammnd.
+ */
+void mdss_bus_bandwidth_ctrl(int enable)
+{
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+	static int bus_bw_cnt;
+	int changed = 0;
+
+	mutex_lock(&bus_bw_lock);
+	if (enable) {
+		if (bus_bw_cnt == 0)
+			changed++;
+		bus_bw_cnt++;
+	} else {
+		if (bus_bw_cnt) {
+			bus_bw_cnt--;
+			if (bus_bw_cnt == 0)
+				changed++;
+		} else {
+			pr_err("Can not be turned off\n");
+		}
+	}
+
+	pr_debug("bw_cnt=%d changed=%d enable=%d\n",
+			bus_bw_cnt, changed, enable);
+
+	if (changed) {
+		if (!enable) {
+			msm_bus_scale_client_update_request(
+				mdata->bus_hdl, 0);
+			pm_runtime_put(&mdata->pdev->dev);
+		} else {
+			pm_runtime_get_sync(&mdata->pdev->dev);
+			msm_bus_scale_client_update_request(
+				mdata->bus_hdl, mdata->current_bus_idx);
+		}
+	}
+
+	mutex_unlock(&bus_bw_lock);
+}
+EXPORT_SYMBOL(mdss_bus_bandwidth_ctrl);
+
 void mdss_mdp_clk_ctrl(int enable, int isr)
 {
-	struct mdss_data_type *mdata = mdss_res;
+	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	static int mdp_clk_cnt;
 	int changed = 0;
 
@@ -607,9 +657,13 @@ void mdss_mdp_clk_ctrl(int enable, int isr)
 			changed++;
 		mdp_clk_cnt++;
 	} else {
-		mdp_clk_cnt--;
-		if (mdp_clk_cnt == 0)
-			changed++;
+		if (mdp_clk_cnt) {
+			mdp_clk_cnt--;
+			if (mdp_clk_cnt == 0)
+				changed++;
+		} else {
+			pr_err("Can not be turned off\n");
+		}
 	}
 
 	pr_debug("%s: clk_cnt=%d changed=%d enable=%d\n",
@@ -626,6 +680,8 @@ void mdss_mdp_clk_ctrl(int enable, int isr)
 		mdss_mdp_clk_update(MDSS_CLK_MDP_LUT, enable);
 		if (mdata->vsync_ena)
 			mdss_mdp_clk_update(MDSS_CLK_MDP_VSYNC, enable);
+
+		mdss_bus_bandwidth_ctrl(enable);
 
 		if (!enable)
 			pm_runtime_put(&mdata->pdev->dev);

@@ -168,13 +168,14 @@ void mdss_fb_no_update_notify_timer_cb(unsigned long data)
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)data;
 	if (!mfd)
 		pr_err("%s mfd NULL\n", __func__);
+	mfd->no_update.value = NOTIFY_TYPE_NO_UPDATE;
 	complete(&mfd->no_update.comp);
 }
 
 static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 							unsigned long *argp)
 {
-	int ret, notify;
+	int ret, notify, to_user;
 
 	ret = copy_from_user(&notify, argp, sizeof(int));
 	if (ret) {
@@ -189,14 +190,18 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 		INIT_COMPLETION(mfd->update.comp);
 		ret = wait_for_completion_interruptible_timeout(
 						&mfd->update.comp, 4 * HZ);
+		to_user = mfd->update.value;
 	} else {
 		INIT_COMPLETION(mfd->no_update.comp);
 		ret = wait_for_completion_interruptible_timeout(
 						&mfd->no_update.comp, 4 * HZ);
+		to_user = mfd->no_update.value;
 	}
 	if (ret == 0)
 		ret = -ETIMEDOUT;
-	return (ret > 0) ? 0 : ret;
+	else if (ret > 0)
+		ret = copy_to_user(argp, &to_user, sizeof(int));
+	return ret;
 }
 
 static int lcd_backlight_registered;
@@ -212,15 +217,18 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 
 	/* This maps android backlight level 0 to 255 into
 	   driver backlight level 0 to bl_max with rounding */
-	bl_lvl = (2 * value * mfd->panel_info->bl_max +
-		  MDSS_MAX_BL_BRIGHTNESS) / (2 * MDSS_MAX_BL_BRIGHTNESS);
+	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
+						MDSS_MAX_BL_BRIGHTNESS);
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
 
-	mutex_lock(&mfd->bl_lock);
-	mdss_fb_set_backlight(mfd, bl_lvl);
-	mutex_unlock(&mfd->bl_lock);
+	if (!IS_CALIB_MODE_BL(mfd) && (!mfd->ext_bl_ctrl || !value ||
+							!mfd->bl_level)) {
+		mutex_lock(&mfd->bl_lock);
+		mdss_fb_set_backlight(mfd, bl_lvl);
+		mutex_unlock(&mfd->bl_lock);
+	}
 }
 
 static struct led_classdev backlight_led = {
@@ -269,9 +277,42 @@ static ssize_t mdss_fb_get_type(struct device *dev,
 	return ret;
 }
 
+static void mdss_fb_parse_dt_split(struct msm_fb_data_type *mfd)
+{
+	u32 data[2];
+	struct platform_device *pdev = mfd->pdev;
+	if (of_property_read_u32_array(pdev->dev.of_node, "qcom,mdss-fb-split",
+				       data, 2))
+		return;
+	if (data[0] && data[1] &&
+	    (mfd->panel_info->xres == (data[0] + data[1]))) {
+		mfd->split_fb_left = data[0];
+		mfd->split_fb_right = data[1];
+		pr_info("split framebuffer left=%d right=%d\n",
+			mfd->split_fb_left, mfd->split_fb_right);
+	} else {
+		mfd->split_fb_left = 0;
+		mfd->split_fb_right = 0;
+	}
+}
+
+static ssize_t mdss_fb_get_split(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	ssize_t ret = 0;
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	ret = snprintf(buf, PAGE_SIZE, "%d %d\n",
+		       mfd->split_fb_left, mfd->split_fb_right);
+	return ret;
+}
+
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
+static DEVICE_ATTR(msm_fb_split, S_IRUGO, mdss_fb_get_split, NULL);
+
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
+	&dev_attr_msm_fb_split.attr,
 	NULL,
 };
 
@@ -477,6 +518,16 @@ int is_fboot;
 struct msm_fb_data_type *mfd_base = NULL;
 static int bl_chargerlogo;
 #endif
+
+static void mdss_fb_shutdown(struct platform_device *pdev)
+{
+	struct msm_fb_data_type *mfd = platform_get_drvdata(pdev);
+
+	for (; mfd->ref_cnt > 1; mfd->ref_cnt--)
+		pm_runtime_put(mfd->fbi->dev);
+
+	mdss_fb_release(mfd->fbi, 0);
+}
 
 static int mdss_fb_probe(struct platform_device *pdev)
 {
@@ -812,6 +863,7 @@ static struct platform_driver mdss_fb_driver = {
 	.remove = mdss_fb_remove,
 	.suspend = mdss_fb_suspend,
 	.resume = mdss_fb_resume,
+	.shutdown = mdss_fb_shutdown,
 	.driver = {
 		.name = "mdss_fb",
 		.of_match_table = mdss_fb_dt_match,
@@ -831,9 +883,23 @@ static int bl_level_old;
 static void mdss_fb_scale_bl(struct msm_fb_data_type *mfd, u32 *bl_lvl)
 {
 	u32 temp = *bl_lvl;
+
 	pr_debug("input = %d, scale = %d", temp, mfd->bl_scale);
 	if (temp >= mfd->bl_min_lvl) {
-		/* bl_scale is the numerator of scaling fraction (x/1024)*/
+		if (temp > mfd->panel_info->bl_max) {
+			pr_warn("%s: invalid bl level\n",
+				__func__);
+			temp = mfd->panel_info->bl_max;
+		}
+		if (mfd->bl_scale > 1024) {
+			pr_warn("%s: invalid bl scale\n",
+				__func__);
+			mfd->bl_scale = 1024;
+		}
+		/*
+		 * bl_scale is the numerator of
+		 * scaling fraction (x/1024)
+		 */
 		temp = (temp * mfd->bl_scale) / 1024;
 
 		/*if less than minimum level, use min level*/
@@ -872,7 +938,7 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 	}
 #endif
 
-	if (!mfd->panel_power_on || !bl_updated) {
+	if ((!mfd->panel_power_on || !bl_updated) && !IS_CALIB_MODE_BL(mfd)) {
 		unset_bl_level = bkl_lvl;
 		return;
 	} else {
@@ -885,6 +951,7 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 #if defined(CONFIG_MACH_LGE)
 		if (temp != -BOOT_BRIGHTNESS)
 #endif
+		if (!IS_CALIB_MODE_BL(mfd))
 			mdss_fb_scale_bl(mfd, &temp);
 		/*
 		 * Even though backlight has been scaled, want to show that
@@ -946,6 +1013,9 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			ret = mfd->mdp.on_fnc(mfd);
 			if (ret == 0)
 				mfd->panel_power_on = true;
+			mutex_lock(&mfd->update.lock);
+			mfd->update.type = NOTIFY_TYPE_UPDATE;
+			mutex_unlock(&mfd->update.lock);
 		}
 		break;
 
@@ -956,6 +1026,11 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 	default:
 		if (mfd->panel_power_on && mfd->mdp.off_fnc) {
 			int curr_pwr_state;
+
+			mutex_lock(&mfd->update.lock);
+			mfd->update.type = NOTIFY_TYPE_SUSPEND;
+			mutex_unlock(&mfd->update.lock);
+
 #if defined(CONFIG_MACH_LGE) && !defined(CONFIG_MACH_MSM8974_Z_KR) && !defined(CONFIG_MACH_MSM8974_Z_US) && !defined(CONFIG_OLED_SUPPORT)
 	 /* to hide blinking screen when system reset */
 	 if (mfd->index==0 && backlight_status==1){
@@ -963,11 +1038,16 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			mutex_lock(&mfd->bl_lock);
 			mdss_fb_set_backlight(mfd, 0);
 			mutex_unlock(&mfd->bl_lock);
+#ifdef CONFIG_MACH_MSM8974_G2_SPR
+			unset_bl_level = 0;
+#else
 			unset_bl_level = -BOOT_BRIGHTNESS;
+#endif			
 	 }
 #endif
 
 			del_timer(&mfd->no_update.timer);
+			mfd->no_update.value = NOTIFY_TYPE_SUSPEND;
 			complete(&mfd->no_update.comp);
 
 			mfd->op_enable = false;
@@ -981,7 +1061,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			bl_updated = 0;
 #endif
 
-#if defined(CONFIG_MACH_MSM8974_VU3_KR) || defined(CONFIG_OLED_SUPPORT)
+#if defined(CONFIG_MACH_MSM8974_VU3_KR)
 			   flush_work_sync(&mfd->commit_work);
 #endif
 			ret = mfd->mdp.off_fnc(mfd);
@@ -1340,6 +1420,8 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	mfd->ref_cnt = 0;
 	mfd->panel_power_on = false;
 
+	mdss_fb_parse_dt_split(mfd);
+
 	if (mdss_fb_alloc_fbmem(mfd)) {
 		pr_err("unable to allocate framebuffer memory\n");
 		return -ENOMEM;
@@ -1347,6 +1429,7 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 
 	mfd->op_enable = true;
 
+	mutex_init(&mfd->update.lock);
 	mutex_init(&mfd->no_update.lock);
 	mutex_init(&mfd->sync_mutex);
 	init_timer(&mfd->no_update.timer);
@@ -1400,7 +1483,8 @@ static int mdss_fb_open(struct fb_info *info, int user)
 					   mfd->op_enable);
 		if (result) {
 			pm_runtime_put(info->dev);
-			pr_err("mdss_fb_open: can't turn on display!\n");
+			pr_err("can't turn on fb%d! rc=%d\n", mfd->index,
+				result);
 			return result;
 		}
 	}
@@ -1433,7 +1517,7 @@ static int mdss_fb_release(struct fb_info *info, int user)
 		ret = mdss_fb_blank_sub(FB_BLANK_POWERDOWN, info,
 				       mfd->op_enable);
 		if (ret) {
-			pr_err("can't turn off display!\n");
+			pr_err("can't turn off fb%d! rc=%d\n", mfd->index, ret);
 			return ret;
 		}
 	}

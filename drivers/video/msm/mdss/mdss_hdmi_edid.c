@@ -15,12 +15,6 @@
 #include <mach/board.h>
 #include "mdss_hdmi_edid.h"
 
-// enable DEV_DBG log
-#ifdef DEV_DBG
-#undef DEV_DBG
-#define DEV_DBG(fmt, args...)   pr_info(fmt, ##args)
-#endif
-
 /* LGE_CHANGE,
  * add bridge function which can offer edid info from slimport device
  * 2012-12-06, jihyun.seong@lge.com
@@ -1252,14 +1246,14 @@ static void hdmi_edid_get_display_mode(struct hdmi_edid_ctrl *edid_ctrl,
 	while (std_blk < 8) {
 		if ((edid_blk0[0x26 + offset] == 0x81) &&
 		    (edid_blk0[0x26 + offset + 1] == 0x80)) {
-			DEV_DBG("%s: 108MHz: off=[%x] stdblk=[%x]\n",
+			pr_debug("%s: 108MHz: off=[%x] stdblk=[%x]\n",
 				 __func__, offset, std_blk);
 			hdmi_edid_add_sink_video_format(sink_data,
 				HDMI_VFRMT_1280x1024p60_5_4);
 		}
 		if ((edid_blk0[0x26 + offset] == 0x61) &&
 		    (edid_blk0[0x26 + offset + 1] == 0x40)) {
-			DEV_DBG("%s:1: 65MHz: off=[%x] stdblk=[%x]\n",
+			pr_debug("%s: 65MHz: off=[%x] stdblk=[%x]\n",
 				 __func__, offset, std_blk);
 			hdmi_edid_add_sink_video_format(sink_data,
 				HDMI_VFRMT_1024x768p60_4_3);
@@ -1292,7 +1286,7 @@ static void hdmi_edid_get_display_mode(struct hdmi_edid_ctrl *edid_ctrl,
 				iter++;
 				/* Second set of supported formats */
 				if (edid_blk0[iter] & 0x02) {
-					DEV_DBG("%s: DMT 1280x1024@60\n",
+					pr_debug("%s: DMT 1280x1024@60\n",
 						 __func__);
 					hdmi_edid_add_sink_video_format(
 						sink_data,
@@ -1307,7 +1301,7 @@ static void hdmi_edid_get_display_mode(struct hdmi_edid_ctrl *edid_ctrl,
 
 	/* Established Timing I and II */
 	if (edid_blk0[0x24] & BIT(3)) {
-		DEV_DBG("%s:2: 65MHz: off=[%x] stdblk=[%x]\n",
+		pr_debug("%s: 65MHz: off=[%x] stdblk=[%x]\n",
 			 __func__, offset, std_blk);
 		hdmi_edid_add_sink_video_format(sink_data,
 				HDMI_VFRMT_1024x768p60_4_3);
@@ -1557,6 +1551,7 @@ u32 hdmi_edid_get_sink_mode(void *input)
 		DEV_ERR("%s: invalid input\n", __func__);
 		return 0;
 	}
+
 #ifdef CONFIG_SLIMPORT_ANX7808
 	if (is_slimport_dp())
 		return true;

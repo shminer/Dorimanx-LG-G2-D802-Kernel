@@ -829,7 +829,7 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 			if (src_h <= pipe->dst.h) {
 				scale_config |= /* G/Y, A */
 					(filter_mode << 10) |
-					(MDSS_MDP_SCALE_FILTER_NEAREST << 18);
+					(MDSS_MDP_SCALE_FILTER_BIL << 18);
 			} else
 				scale_config |= /* G/Y, A */
 					(MDSS_MDP_SCALE_FILTER_PCMN << 10) |
@@ -848,7 +848,7 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 			if (src_h <= pipe->dst.h)
 				scale_config |= /* RGB, A */
 					(MDSS_MDP_SCALE_FILTER_BIL << 10) |
-					(MDSS_MDP_SCALE_FILTER_NEAREST << 18);
+					(MDSS_MDP_SCALE_FILTER_BIL << 18);
 			else
 				scale_config |= /* RGB, A */
 					(MDSS_MDP_SCALE_FILTER_PCMN << 10) |
@@ -882,7 +882,7 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 			if (src_w <= pipe->dst.w) {
 				scale_config |= /* G/Y, A */
 					(filter_mode << 8) |
-					(MDSS_MDP_SCALE_FILTER_NEAREST << 16);
+					(MDSS_MDP_SCALE_FILTER_BIL << 16);
 			} else
 				scale_config |= /* G/Y, A */
 					(MDSS_MDP_SCALE_FILTER_PCMN << 8) |
@@ -901,7 +901,7 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 			if (src_w <= pipe->dst.w)
 				scale_config |= /* RGB, A */
 					(MDSS_MDP_SCALE_FILTER_BIL << 8) |
-					(MDSS_MDP_SCALE_FILTER_NEAREST << 16);
+					(MDSS_MDP_SCALE_FILTER_BIL << 16);
 			else
 				scale_config |= /* RGB, A */
 					(MDSS_MDP_SCALE_FILTER_PCMN << 8) |
@@ -1126,6 +1126,8 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 	int i, ret = 0;
 	struct mdss_data_type *mdata;
 	struct mdss_mdp_ctl *ctl;
+	u32 mixer_cnt;
+	u32 mixer_id[MDSS_MDP_INTF_MAX_LAYERMIXER];
 
 	if (!mixer || !mixer->ctl || !mixer->ctl->mdata)
 		return -EINVAL;
@@ -1150,7 +1152,9 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 	else
 		flags = 0;
 
-	if (dspp_num < mdata->nad_cfgs) {
+	mixer_cnt = mdss_mdp_get_ctl_mixers(disp_num, mixer_id);
+	if (dspp_num < mdata->nad_cfgs && (mixer_cnt != 2) &&
+			ctl->mfd->panel_info->type != MIPI_CMD_PANEL) {
 		ret = mdss_mdp_ad_setup(ctl->mfd);
 #ifdef CONFIG_MACH_LGE
 		if (ret < 0 && ret != -EINVAL)
@@ -1160,6 +1164,10 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 			pr_warn("ad_setup(dspp%d) returns %d", dspp_num, ret);
 #endif
 	}
+	/* call calibration specific processing here */
+	if (ctl->mfd->calib_mode)
+		goto flush_exit;
+
 	/* nothing to update */
 	if ((!flags) && (!(opmode)) && (ret <= 0))
 		goto dspp_exit;
@@ -1250,6 +1258,7 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 	if (pp_sts->pgc_sts & PP_STS_ENABLE)
 		opmode |= (1 << 22);
 
+flush_exit:
 	writel_relaxed(opmode, basel + MDSS_MDP_REG_DSPP_OP_MODE);
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_FLUSH, BIT(13 + dspp_num));
 	wmb();
@@ -2358,6 +2367,10 @@ int mdss_mdp_gamut_config(struct mdss_mdp_ctl *ctl,
 	u32 offset, disp_num, dspp_num = 0;
 	uint16_t *tbl_off;
 	struct mdp_gamut_cfg_data local_cfg;
+	uint16_t *r_tbl[MDP_GAMUT_TABLE_NUM];
+	uint16_t *g_tbl[MDP_GAMUT_TABLE_NUM];
+	uint16_t *b_tbl[MDP_GAMUT_TABLE_NUM];
+
 
 	if (!ctl)
 		return -EINVAL;
@@ -2385,22 +2398,67 @@ int mdss_mdp_gamut_config(struct mdss_mdp_ctl *ctl,
 		offset = MDSS_MDP_REG_DSPP_OFFSET(dspp_num) +
 			  MDSS_MDP_REG_DSPP_GAMUT_BASE;
 		for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
+			r_tbl[i] = kzalloc(
+				sizeof(uint16_t) * config->tbl_size[i],
+				GFP_KERNEL);
+			if (!r_tbl[i]) {
+				pr_err("%s: alloc failed\n", __func__);
+				goto gamut_config_exit;
+			}
 			for (j = 0; j < config->tbl_size[i]; j++)
-				config->r_tbl[i][j] =
+				r_tbl[i][j] =
 					(u16)MDSS_MDP_REG_READ(offset);
 			offset += 4;
+			ret = copy_to_user(config->r_tbl[i], r_tbl[i],
+				     sizeof(uint16_t) * config->tbl_size[i]);
+			kfree(r_tbl[i]);
+			if (ret) {
+				pr_err("%s: copy tbl to usr failed\n",
+					__func__);
+				goto gamut_config_exit;
+			}
 		}
 		for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
+			g_tbl[i] = kzalloc(
+				sizeof(uint16_t) * config->tbl_size[i],
+				GFP_KERNEL);
+			if (!g_tbl[i]) {
+				pr_err("%s: alloc failed\n", __func__);
+				goto gamut_config_exit;
+			}
 			for (j = 0; j < config->tbl_size[i]; j++)
-				config->g_tbl[i][j] =
+				g_tbl[i][j] =
 					(u16)MDSS_MDP_REG_READ(offset);
 			offset += 4;
+			ret = copy_to_user(config->g_tbl[i], g_tbl[i],
+				     sizeof(uint16_t) * config->tbl_size[i]);
+			kfree(g_tbl[i]);
+			if (ret) {
+				pr_err("%s: copy tbl to usr failed\n",
+					__func__);
+				goto gamut_config_exit;
+			}
 		}
 		for (i = 0; i < MDP_GAMUT_TABLE_NUM; i++) {
+			b_tbl[i] = kzalloc(
+				sizeof(uint16_t) * config->tbl_size[i],
+				GFP_KERNEL);
+			if (!b_tbl[i]) {
+				pr_err("%s: alloc failed\n", __func__);
+				goto gamut_config_exit;
+			}
 			for (j = 0; j < config->tbl_size[i]; j++)
-				config->b_tbl[i][j] =
+				b_tbl[i][j] =
 					(u16)MDSS_MDP_REG_READ(offset);
 			offset += 4;
+			ret = copy_to_user(config->b_tbl[i], b_tbl[i],
+				     sizeof(uint16_t) * config->tbl_size[i]);
+			kfree(b_tbl[i]);
+			if (ret) {
+				pr_err("%s: copy tbl to usr failed\n",
+					__func__);
+				goto gamut_config_exit;
+			}
 		}
 		*copyback = 1;
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
@@ -3078,12 +3136,20 @@ static int pp_update_ad_input(struct msm_fb_data_type *mfd)
 {
 	struct mdss_ad_info *ad;
 	struct mdss_ad_input input;
+	struct mdss_mdp_ctl *ctl;
+
+	if (!mfd)
+		return -EINVAL;
+	ctl = mfd_to_ctl(mfd);
+	if (!ctl)
+		return -EINVAL;
 
 	ad = mdss_mdp_get_ad(mfd);
 	if (!ad || ad->cfg.mode == MDSS_AD_MODE_AUTO_BL)
 		return -EINVAL;
 
-	pr_debug("backlight level changed, trigger update to AD");
+	pr_debug("backlight level changed (%d), trigger update to AD",
+						mfd->bl_level);
 	input.mode = ad->cfg.mode;
 	if (MDSS_AD_MODE_DATA_MATCH(ad->cfg.mode, MDSS_AD_INPUT_AMBIENT))
 		input.in.amb_light = ad->ad_data;
@@ -3166,14 +3232,16 @@ int mdss_mdp_ad_input(struct msm_fb_data_type *mfd,
 	int ret = 0;
 	struct mdss_ad_info *ad;
 	struct mdss_mdp_ctl *ctl;
+	u32 bl;
 
 	ad = mdss_mdp_get_ad(mfd);
 	if (!ad)
 		return -EINVAL;
 
 	mutex_lock(&ad->lock);
-	if (!PP_AD_STATE_IS_INITCFG(ad->state) &&
-			!PP_AD_STS_IS_DIRTY(ad->sts)) {
+	if ((!PP_AD_STATE_IS_INITCFG(ad->state) &&
+			!PP_AD_STS_IS_DIRTY(ad->sts)) &&
+			!input->mode == MDSS_AD_MODE_CALIB) {
 		pr_warn("AD not initialized or configured.");
 		ret = -EPERM;
 		goto error;
@@ -3205,6 +3273,25 @@ int mdss_mdp_ad_input(struct msm_fb_data_type *mfd,
 		ad->calc_itr = ad->cfg.stab_itr;
 		ad->sts |= PP_AD_STS_DIRTY_VSYNC;
 		ad->sts |= PP_AD_STS_DIRTY_DATA;
+		break;
+	case MDSS_AD_MODE_CALIB:
+		wait = 0;
+		if (mfd->calib_mode) {
+			bl = input->in.calib_bl;
+			if (bl >= AD_BL_LIN_LEN) {
+				pr_warn("calib_bl 255 max!");
+				break;
+			}
+			mutex_unlock(&ad->lock);
+			mutex_lock(&mfd->bl_lock);
+			MDSS_BRIGHT_TO_BL(bl, bl, mfd->panel_info->bl_max,
+							MDSS_MAX_BL_BRIGHTNESS);
+			mdss_fb_set_backlight(mfd, bl);
+			mutex_unlock(&mfd->bl_lock);
+			mutex_lock(&ad->lock);
+		} else {
+			pr_warn("should be in calib mode");
+		}
 		break;
 	default:
 		pr_warn("invalid default %d", input->mode);
@@ -3423,6 +3510,7 @@ static int mdss_mdp_ad_setup(struct msm_fb_data_type *mfd)
 		ad->state |= PP_AD_STATE_RUN;
 		mutex_lock(&mfd->bl_lock);
 		mfd->mdp.update_ad_input = pp_update_ad_input;
+		mfd->ext_bl_ctrl = ad->cfg.bl_ctrl_mode;
 		mutex_unlock(&mfd->bl_lock);
 
 	} else {
@@ -3447,6 +3535,7 @@ static int mdss_mdp_ad_setup(struct msm_fb_data_type *mfd)
 			memset(&ad->cfg, 0, sizeof(struct mdss_ad_cfg));
 			mutex_lock(&mfd->bl_lock);
 			mfd->mdp.update_ad_input = NULL;
+			mfd->ext_bl_ctrl = 0;
 			mutex_unlock(&mfd->bl_lock);
 		}
 		ad->state &= ~PP_AD_STATE_RUN;
@@ -3542,6 +3631,9 @@ static void pp_ad_calc_worker(struct work_struct *work)
 	mutex_lock(&mfd->lock);
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_FLUSH, BIT(13 + ad->num));
 	mutex_unlock(&mfd->lock);
+
+	/* Trigger update notify to wake up those waiting for display updates */
+	mdss_fb_update_notify_update(mfd);
 }
 
 #define PP_AD_LUT_LEN 33
@@ -3644,9 +3736,6 @@ end:
 	return ret;
 }
 
-
-
-
 int mdss_mdp_calib_config(struct mdp_calib_config_data *cfg, u32 *copyback)
 {
 	int ret = -1;
@@ -3669,4 +3758,15 @@ int mdss_mdp_calib_config(struct mdp_calib_config_data *cfg, u32 *copyback)
 	}
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 	return ret;
+}
+
+int mdss_mdp_calib_mode(struct msm_fb_data_type *mfd,
+				struct mdss_calib_cfg *cfg)
+{
+	if (!mdss_pp_res || !mfd)
+		return -EINVAL;
+	mutex_lock(&mdss_pp_mutex);
+	mfd->calib_mode = cfg->calib_mask;
+	mutex_unlock(&mdss_pp_mutex);
+	return 0;
 }

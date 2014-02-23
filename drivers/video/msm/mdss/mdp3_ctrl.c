@@ -86,13 +86,20 @@ static int mdp3_bufq_count(struct mdp3_buffer_queue *bufq)
 	return bufq->count;
 }
 
+static void mdp3_dispatch_vsync(struct work_struct *work)
+{
+	struct mdp3_session_data *mdp3_session;
+	mdp3_session = container_of(work, struct mdp3_session_data, vsync_work);
+	if (mdp3_session && mdp3_session->mfd)
+		sysfs_notify(&mdp3_session->mfd->fbi->dev->kobj, NULL,
+				"vsync_event");
+}
+
 void vsync_notify_handler(void *arg)
 {
 	struct mdp3_session_data *session = (struct mdp3_session_data *)arg;
-	spin_lock(&session->vsync_lock);
 	session->vsync_time = ktime_get();
-	complete(&session->vsync_comp);
-	spin_unlock(&session->vsync_lock);
+	schedule_work(&session->vsync_work);
 }
 
 static int mdp3_ctrl_vsync_enable(struct msm_fb_data_type *mfd, int enable)
@@ -100,7 +107,6 @@ static int mdp3_ctrl_vsync_enable(struct msm_fb_data_type *mfd, int enable)
 	struct mdp3_session_data *mdp3_session;
 	struct mdp3_vsync_notification vsync_client;
 	struct mdp3_vsync_notification *arg = NULL;
-	unsigned long flag;
 
 	pr_debug("mdp3_ctrl_vsync_enable =%d\n", enable);
 	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
@@ -121,61 +127,44 @@ static int mdp3_ctrl_vsync_enable(struct msm_fb_data_type *mfd, int enable)
 	mutex_lock(&mdp3_session->lock);
 	mdp3_session->dma->vsync_enable(mdp3_session->dma, arg);
 	mutex_unlock(&mdp3_session->lock);
-	spin_lock_irqsave(&mdp3_session->vsync_lock, flag);
-	if (enable)
-		INIT_COMPLETION(mdp3_session->vsync_comp);
-	else
-		complete_all(&mdp3_session->vsync_comp);
-	spin_unlock_irqrestore(&mdp3_session->vsync_lock, flag);
 	return 0;
+}
+
+static int mdp3_ctrl_async_blit_req(struct msm_fb_data_type *mfd,
+	void __user *p)
+{
+	struct mdp_async_blit_req_list req_list_header;
+	int rc, count;
+	void __user *p_req;
+
+	if (copy_from_user(&req_list_header, p, sizeof(req_list_header)))
+		return -EFAULT;
+	p_req = p + sizeof(req_list_header);
+	count = req_list_header.count;
+	if (count < 0 || count >= MAX_BLIT_REQ)
+		return -EINVAL;
+	rc = mdp3_ppp_parse_req(p_req, &req_list_header, 1);
+	if (!rc)
+		rc = copy_to_user(p, &req_list_header, sizeof(req_list_header));
+	return rc;
 }
 
 static int mdp3_ctrl_blit_req(struct msm_fb_data_type *mfd, void __user *p)
 {
-	const int MAX_LIST_WINDOW = 16;
-	struct mdp_blit_req req_list[MAX_LIST_WINDOW];
-	struct mdp_blit_req_list req_list_header;
-	int rc, count, i, req_list_count;
+	struct mdp_async_blit_req_list req_list_header;
+	int rc, count;
+	void __user *p_req;
 
-	if (copy_from_user(&req_list_header, p, sizeof(req_list_header)))
+	if (copy_from_user(&(req_list_header.count), p,
+			sizeof(struct mdp_blit_req_list)))
 		return -EFAULT;
-	p += sizeof(req_list_header);
+	p_req = p + sizeof(struct mdp_blit_req_list);
 	count = req_list_header.count;
 	if (count < 0 || count >= MAX_BLIT_REQ)
 		return -EINVAL;
-	while (count > 0) {
-		/*
-		 * Access the requests through a narrow window to decrease copy
-		 * overhead and make larger requests accessible to the
-		 * coherency management code.
-		 * NOTE: The window size is intended to be larger than the
-		 *       typical request size, but not require more than 2
-		 *       kbytes of stack storage.
-		 */
-		req_list_count = count;
-		if (req_list_count > MAX_LIST_WINDOW)
-			req_list_count = MAX_LIST_WINDOW;
-		if (copy_from_user(&req_list, p,
-				sizeof(struct mdp_blit_req)*req_list_count))
-			return -EFAULT;
-		/*
-		 * Do the blit DMA, if required -- returning early only if
-		 * there is a failure.
-		 */
-		for (i = 0; i < req_list_count; i++) {
-			if (!(req_list[i].flags & MDP_NO_BLIT)) {
-				/* Do the actual blit. */
-				rc = mdp3_ppp_start_blit(mfd, &(req_list[i]));
-				if (rc)
-					return rc;
-			}
-		}
-
-		/* Go to next window of requests. */
-		count -= req_list_count;
-		p += sizeof(struct mdp_blit_req)*req_list_count;
-	}
-	return 0;
+	req_list_header.sync.acq_fen_fd_cnt = 0;
+	rc = mdp3_ppp_parse_req(p_req, &req_list_header, 0);
+	return rc;
 }
 
 static ssize_t mdp3_vsync_show_event(struct device *dev,
@@ -186,27 +175,16 @@ static ssize_t mdp3_vsync_show_event(struct device *dev,
 	struct mdp3_session_data *mdp3_session = NULL;
 	u64 vsync_ticks;
 	int rc;
-	unsigned long flag;
 
 	if (!mfd || !mfd->mdp.private1)
-		return 0;
+		return -EAGAIN;
 
 	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
 
-	rc = wait_for_completion_interruptible_timeout(
-				&mdp3_session->vsync_comp,
-				msecs_to_jiffies(VSYNC_PERIOD * 5));
-	if (rc <= 0) {
-		pr_warn("vsync wait on fb%d interrupted (%d)\n",
-			mfd->index, rc);
-	}
-
-	spin_lock_irqsave(&mdp3_session->vsync_lock, flag);
 	vsync_ticks = ktime_to_ns(mdp3_session->vsync_time);
-	spin_unlock_irqrestore(&mdp3_session->vsync_lock, flag);
 
 	pr_debug("fb%d vsync=%llu", mfd->index, vsync_ticks);
-	rc = snprintf(buf, PAGE_SIZE, "VSYNC=%llu", vsync_ticks);
+	rc = scnprintf(buf, PAGE_SIZE, "VSYNC=%llu", vsync_ticks);
 	return rc;
 }
 
@@ -243,8 +221,10 @@ static int mdp3_ctrl_res_req_clk(struct msm_fb_data_type *mfd, int status)
 	int rc = 0;
 	if (status) {
 
-		mdp3_clk_set_rate(MDP3_CLK_CORE, MDP_CORE_CLK_RATE);
-		mdp3_clk_set_rate(MDP3_CLK_VSYNC, MDP_VSYNC_CLK_RATE);
+		mdp3_clk_set_rate(MDP3_CLK_CORE, MDP_CORE_CLK_RATE,
+				MDP3_CLIENT_DMA_P);
+		mdp3_clk_set_rate(MDP3_CLK_VSYNC, MDP_VSYNC_CLK_RATE,
+				MDP3_CLIENT_DMA_P);
 
 		rc = mdp3_clk_enable(true);
 		if (rc)
@@ -411,10 +391,18 @@ static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 		goto on_error;
 	}
 
+	rc = mdp3_iommu_enable(MDP3_CLIENT_DMA_P);
+	if (rc) {
+		pr_err("fail to attach MDP DMA SMMU\n");
+		goto on_error;
+	}
+
 	/* request bus bandwidth before DSI DMA traffic */
 	rc = mdp3_ctrl_res_req_bus(mfd, 1);
-	if (rc)
+	if (rc) {
 		pr_err("fail to request bus resource\n");
+		goto on_error;
+	}
 
 	panel = mdp3_session->panel;
 	if (panel->event_handler)
@@ -444,9 +432,6 @@ static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 	rc = mdp3_ctrl_intf_init(mfd, mdp3_session->intf);
 	if (rc) {
 		pr_err("display interface init failed\n");
-
-
-
 		goto on_error;
 	}
 
@@ -506,6 +491,11 @@ static int mdp3_ctrl_off(struct msm_fb_data_type *mfd)
 	rc = mdp3_ctrl_res_req_clk(mfd, 0);
 	if (rc)
 		pr_err("mdp clock resource release failed\n");
+
+	rc = mdp3_iommu_disable(MDP3_CLIENT_DMA_P);
+	if (rc)
+		pr_err("fail to dettach MDP DMA SMMU\n");
+
 off_error:
 	mdp3_session->status = 0;
 	mutex_unlock(&mdp3_session->lock);
@@ -749,6 +739,9 @@ static int mdp3_ctrl_ioctl_handler(struct msm_fb_data_type *mfd,
 			rc = -EFAULT;
 		}
 		break;
+	case MSMFB_ASYNC_BLIT:
+		rc = mdp3_ctrl_async_blit_req(mfd, argp);
+		break;
 	case MSMFB_BLIT:
 		rc = mdp3_ctrl_blit_req(mfd, argp);
 		break;
@@ -823,8 +816,7 @@ int mdp3_ctrl_init(struct msm_fb_data_type *mfd)
 	}
 	memset(mdp3_session, 0, sizeof(struct mdp3_session_data));
 	mutex_init(&mdp3_session->lock);
-	init_completion(&mdp3_session->vsync_comp);
-	spin_lock_init(&mdp3_session->vsync_lock);
+	INIT_WORK(&mdp3_session->vsync_work, mdp3_dispatch_vsync);
 	mdp3_session->dma = mdp3_get_dma_pipe(MDP3_DMA_CAP_ALL);
 	if (!mdp3_session->dma) {
 		rc = -ENODEV;
@@ -838,6 +830,7 @@ int mdp3_ctrl_init(struct msm_fb_data_type *mfd)
 		goto init_done;
 	}
 
+	mdp3_session->mfd = mfd;
 	mdp3_session->panel = dev_get_platdata(&mfd->pdev->dev);
 	mdp3_session->status = 0;
 	mdp3_session->overlay.id = MSMFB_NEW_REQUEST;

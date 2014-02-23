@@ -1674,6 +1674,14 @@ void mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	if (req == NULL)
 		goto need_lock;
 
+	/*
+	 * mdss interrupt is generated in mdp core clock domain
+	 * mdp clock need to be enabled to receive dsi interrupt
+	 * also, axi bus bandwidth need since dsi controller will
+	 * fetch dcs commands from axi bus
+	 */
+	mdss_bus_bandwidth_ctrl(1);
+
 	pr_debug("%s:  from_mdp=%d pid=%d\n", __func__, from_mdp, current->pid);
 	mdss_dsi_clk_ctrl(ctrl, 1);
 
@@ -1697,6 +1705,7 @@ void mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 		mdss_dsi_cmdlist_tx(ctrl, req);
 
 	mdss_dsi_clk_ctrl(ctrl, 0);
+	mdss_bus_bandwidth_ctrl(0);
 
 need_lock:
 
@@ -1768,7 +1777,7 @@ void mdss_dsi_ack_err_status(unsigned char *base)
 
 	if (status) {
 		MIPI_OUTP(base + 0x0068, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
@@ -1779,7 +1788,7 @@ void mdss_dsi_timeout_status(unsigned char *base)
 	status = MIPI_INP(base + 0x00c0);/* DSI_TIMEOUT_STATUS */
 	if (status & 0x0111) {
 		MIPI_OUTP(base + 0x00c0, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
@@ -1791,7 +1800,7 @@ void mdss_dsi_dln0_phy_err(unsigned char *base)
 
 	if (status & 0x011111) {
 		MIPI_OUTP(base + 0x00b4, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
@@ -1803,7 +1812,7 @@ void mdss_dsi_fifo_status(unsigned char *base)
 
 	if (status & 0x44444489) {
 		MIPI_OUTP(base + 0x000c, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
@@ -1815,7 +1824,7 @@ void mdss_dsi_status(unsigned char *base)
 
 	if (status & 0x80000000) {
 		MIPI_OUTP(base + 0x0008, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
