@@ -17,6 +17,7 @@
 #include <kgsl_device.h>
 
 #include "kgsl_trace.h"
+#include "adreno.h"
 
 static inline struct list_head *_get_list_head(struct kgsl_device *device,
 		struct kgsl_context *context)
@@ -57,6 +58,8 @@ static inline void _do_signal_event(struct kgsl_device *device,
 	list_del(&event->list);
 	kgsl_context_put(event->context);
 	kfree(event);
+
+	kgsl_active_count_put(device);
 }
 
 static void _retire_events(struct kgsl_device *device,
@@ -209,9 +212,12 @@ EXPORT_SYMBOL(kgsl_signal_events);
 int kgsl_add_event(struct kgsl_device *device, u32 id, u32 ts,
 	kgsl_event_func func, void *priv, void *owner)
 {
+	int ret;
 	struct kgsl_event *event;
-	unsigned int queued, cur_ts;
+	unsigned int cur_ts;
 	struct kgsl_context *context = NULL;
+	struct adreno_context *drawctxt;
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
 	BUG_ON(!mutex_is_locked(&device->mutex));
 
@@ -222,15 +228,16 @@ int kgsl_add_event(struct kgsl_device *device, u32 id, u32 ts,
 		context = kgsl_context_get(device, id);
 		if (context == NULL)
 			return -EINVAL;
+		/* Do not allow registering of event with invalid timestamp */
+		drawctxt = ADRENO_CONTEXT(context);
+		if (timestamp_cmp(ts, drawctxt->timestamp) > 0) {
+			kgsl_context_put(context);
+			return -EINVAL;
+		}
+	} else {
+		if (timestamp_cmp(ts, adreno_dev->ringbuffer.global_ts) > 0)
+			return -EINVAL;
 	}
-
-	queued = kgsl_readtimestamp(device, context, KGSL_TIMESTAMP_QUEUED);
-
-	if (timestamp_cmp(ts, queued) > 0) {
-		kgsl_context_put(context);
-		return -EINVAL;
-	}
-
 	cur_ts = kgsl_readtimestamp(device, context, KGSL_TIMESTAMP_RETIRED);
 
 	/*
@@ -245,6 +252,7 @@ int kgsl_add_event(struct kgsl_device *device, u32 id, u32 ts,
 
 		func(device, priv, id, ts, KGSL_EVENT_TIMESTAMP_RETIRED);
 		kgsl_context_put(context);
+		queue_work(device->work_queue, &device->ts_expired_ws);
 		return 0;
 	}
 
@@ -252,6 +260,17 @@ int kgsl_add_event(struct kgsl_device *device, u32 id, u32 ts,
 	if (event == NULL) {
 		kgsl_context_put(context);
 		return -ENOMEM;
+	}
+
+	/*
+	 * Increase the active count on the device to avoid going into power
+	 * saving modes while events are pending
+	 */
+	ret = kgsl_active_count_get(device);
+	if (ret < 0) {
+		kgsl_context_put(context);
+		kfree(event);
+		return ret;
 	}
 
 	event->context = context;
@@ -345,44 +364,13 @@ void kgsl_cancel_event(struct kgsl_device *device, struct kgsl_context *context,
 }
 EXPORT_SYMBOL(kgsl_cancel_event);
 
-static inline int _mark_next_event(struct kgsl_device *device,
-		struct list_head *head)
-{
-	struct kgsl_event *event;
-
-	if (!list_empty(head)) {
-		event = list_first_entry(head, struct kgsl_event, list);
-
-		/*
-		 * Next event will return 0 if the event was marked or 1 if the
-		 * timestamp on the event has passed - return that up a layer
-		 */
-
-		if (device->ftbl->next_event)
-			return device->ftbl->next_event(device, event);
-	}
-
-	return 0;
-}
-
 static int kgsl_process_context_events(struct kgsl_device *device,
 		struct kgsl_context *context)
 {
-	while (1) {
-		unsigned int timestamp = kgsl_readtimestamp(device, context,
-			KGSL_TIMESTAMP_RETIRED);
+	unsigned int timestamp = kgsl_readtimestamp(device, context,
+		KGSL_TIMESTAMP_RETIRED);
 
-		_retire_events(device, &context->events, timestamp);
-
-		/*
-		 * _mark_next event will return 1 as long as the next event
-		 * timestamp has expired - this is to cope with an unavoidable
-		 * race condition with the GPU that is still processing events.
-		 */
-
-		if (!_mark_next_event(device, &context->events))
-			break;
-	}
+	_retire_events(device, &context->events, timestamp);
 
 	/*
 	 * Return 0 if the list is empty so the calling function can remove the
@@ -399,11 +387,20 @@ void kgsl_process_events(struct work_struct *work)
 	struct kgsl_context *context, *tmp;
 	uint32_t timestamp;
 
-	mutex_lock(&device->mutex);
+	/*
+	 * Bail unless the global timestamp has advanced.  We can safely do this
+	 * outside of the mutex for speed
+	 */
 
 	timestamp = kgsl_readtimestamp(device, NULL, KGSL_TIMESTAMP_RETIRED);
+	if (timestamp == device->events_last_timestamp)
+		return;
+
+	mutex_lock(&device->mutex);
+
+	device->events_last_timestamp = timestamp;
+
 	_retire_events(device, &device->events, timestamp);
-	_mark_next_event(device, &device->events);
 
 	/* Now process all of the pending contexts */
 	list_for_each_entry_safe(context, tmp, &device->events_pending_list,

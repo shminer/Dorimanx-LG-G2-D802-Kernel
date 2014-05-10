@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2002,2007-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -138,7 +138,7 @@ static void wait_callback(struct kgsl_device *device, void *priv, u32 id,
 		u32 timestamp, u32 type)
 {
 	struct adreno_context *drawctxt = priv;
-	wake_up_all(&drawctxt->waiting);
+	wake_up_interruptible_all(&drawctxt->waiting);
 }
 
 #define adreno_wait_event_interruptible_timeout(wq, condition, timeout, io)   \
@@ -266,7 +266,7 @@ static void global_wait_callback(struct kgsl_device *device, void *priv, u32 id,
 {
 	struct adreno_context *drawctxt = priv;
 
-	wake_up_all(&drawctxt->waiting);
+	wake_up_interruptible_all(&drawctxt->waiting);
 	kgsl_context_put(&drawctxt->base);
 }
 
@@ -346,8 +346,6 @@ void adreno_drawctxt_invalidate(struct kgsl_device *device,
 {
 	struct adreno_context *drawctxt = ADRENO_CONTEXT(context);
 
-	trace_adreno_drawctxt_invalidate(drawctxt);
-
 	drawctxt->state = ADRENO_CONTEXT_STATE_INVALID;
 
 	/* Clear the pending queue */
@@ -386,8 +384,8 @@ void adreno_drawctxt_invalidate(struct kgsl_device *device,
 	mutex_unlock(&drawctxt->mutex);
 
 	/* Give the bad news to everybody waiting around */
-	wake_up_all(&drawctxt->waiting);
-	wake_up_all(&drawctxt->wq);
+	wake_up_interruptible_all(&drawctxt->waiting);
+	wake_up_interruptible_all(&drawctxt->wq);
 }
 
 /**
@@ -551,14 +549,15 @@ int adreno_drawctxt_detach(struct kgsl_context *context)
 			KGSL_MEMSTORE_OFFSET(context->id, eoptimestamp),
 			drawctxt->timestamp);
 
-	adreno_profile_process_results(device);
+	kgsl_sharedmem_free(&drawctxt->gpustate);
+	kgsl_sharedmem_free(&drawctxt->context_gmem_shadow.gmemshadow);
 
-	if (drawctxt->ops && drawctxt->ops->detach)
+	if (drawctxt->ops->detach)
 		drawctxt->ops->detach(drawctxt);
 
 	/* wake threads waiting to submit commands from this context */
-	wake_up_all(&drawctxt->waiting);
-	wake_up_all(&drawctxt->wq);
+	wake_up_interruptible_all(&drawctxt->waiting);
+	wake_up_interruptible_all(&drawctxt->wq);
 
 	return ret;
 }
@@ -589,6 +588,7 @@ void adreno_drawctxt_destroy(struct kgsl_context *context)
 int adreno_context_restore(struct adreno_device *adreno_dev,
 				  struct adreno_context *context)
 {
+	int ret;
 	struct kgsl_device *device;
 	unsigned int cmds[5];
 
@@ -596,7 +596,6 @@ int adreno_context_restore(struct adreno_device *adreno_dev,
 		return -EINVAL;
 
 	device = &adreno_dev->dev;
-
 	/* write the context identifier to the ringbuffer */
 	cmds[0] = cp_nop_packet(1);
 	cmds[1] = KGSL_CONTEXT_TO_MEM_IDENTIFIER;
@@ -604,8 +603,14 @@ int adreno_context_restore(struct adreno_device *adreno_dev,
 	cmds[3] = device->memstore.gpuaddr +
 		KGSL_MEMSTORE_OFFSET(KGSL_MEMSTORE_GLOBAL, current_context);
 	cmds[4] = context->base.id;
-	return adreno_ringbuffer_issuecmds(device, context,
-				KGSL_CMD_FLAGS_NONE, cmds, 5);
+	ret = adreno_ringbuffer_issuecmds(device, context, KGSL_CMD_FLAGS_NONE,
+					cmds, 5);
+	if (ret)
+		return ret;
+
+	return kgsl_mmu_setstate(&device->mmu,
+			context->base.proc_priv->pagetable,
+			context->base.id);
 }
 
 
@@ -704,6 +709,9 @@ int adreno_drawctxt_switch(struct adreno_device *adreno_dev,
 			return ret;
 		}
 
+		/* Put the old instance of the active drawctxt */
+		kgsl_context_put(&adreno_dev->drawctxt_active->base);
+		adreno_dev->drawctxt_active = NULL;
 	}
 
 	/* Get a refcount to the new instance */
@@ -711,11 +719,6 @@ int adreno_drawctxt_switch(struct adreno_device *adreno_dev,
 		if (!_kgsl_context_get(&drawctxt->base))
 			return -EINVAL;
 
-		ret = kgsl_mmu_setstate(&device->mmu,
-			drawctxt->base.proc_priv->pagetable,
-			adreno_dev->drawctxt_active ?
-			adreno_dev->drawctxt_active->base.id :
-			KGSL_CONTEXT_INVALID);
 		/* Set the new context */
 		ret = drawctxt->ops->restore(adreno_dev, drawctxt);
 		if (ret) {
@@ -733,11 +736,9 @@ int adreno_drawctxt_switch(struct adreno_device *adreno_dev,
 		 */
 		ret = kgsl_mmu_setstate(&device->mmu,
 					 device->mmu.defaultpagetable,
-					adreno_dev->drawctxt_active->base.id);
+					 KGSL_CONTEXT_INVALID);
 	}
-	/* Put the old instance of the active drawctxt */
-	if (adreno_dev->drawctxt_active)
-		kgsl_context_put(&adreno_dev->drawctxt_active->base);
+
 	adreno_dev->drawctxt_active = drawctxt;
 	return 0;
 }
