@@ -40,6 +40,7 @@
 #include <mach/rpm-smd.h>
 #include <mach/rpm-regulator-smd.h>
 #include <mach/socinfo.h>
+#include <mach/msm_smem.h>
 #include "board-dt.h"
 #include "clock.h"
 #include "devices.h"
@@ -91,6 +92,7 @@ static void __init msm8974_early_memory(void)
  */
 void __init msm8974_add_drivers(void)
 {
+	msm_smem_init();
 	msm_init_modem_notifier_list();
 	msm_smd_init();
 	msm_rpm_driver_init();
@@ -142,8 +144,6 @@ static struct of_dev_auxdata msm8974_auxdata_lookup[] __initdata = {
 			"msm-tsens", NULL),
 	OF_DEV_AUXDATA("qcom,qcedev", 0xFD440000, \
 			"qcedev.0", NULL),
-	OF_DEV_AUXDATA("qcom,qcrypto", 0xFD440000, \
-			"qcrypto.0", NULL),
 	OF_DEV_AUXDATA("qcom,hsic-host", 0xF9A00000, \
 			"msm_hsic_host", NULL),
 	{}

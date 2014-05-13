@@ -30,7 +30,6 @@
 #include <linux/kernel_stat.h>
 #include <linux/tick.h>
 #include <asm/smp_plat.h>
-#include "acpuclock.h"
 #include <linux/suspend.h>
 
 #define MAX_LONG_SIZE 24
@@ -45,6 +44,9 @@ struct cpu_load_data {
 	cputime64_t prev_cpu_idle;
 	cputime64_t prev_cpu_wall;
 	cputime64_t prev_cpu_iowait;
+#ifdef CONFIG_ALUCARD_HOTPLUG
+	unsigned int cpu_load;
+#endif
 	unsigned int avg_load_maxfreq;
 	unsigned int cur_load_maxfreq;
 	unsigned int samples;
@@ -56,6 +58,10 @@ struct cpu_load_data {
 };
 
 static DEFINE_PER_CPU(struct cpu_load_data, cpuload);
+
+#ifdef CONFIG_MSM_HOTPLUG 
+static unsigned int max_load_maxfreq;
+#endif
 
 static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
 {
@@ -133,6 +139,10 @@ static int update_average_load(unsigned int freq, unsigned int cpu)
 	/* Calculate the scaled load across CPU */
 	load_at_max_freq = (cur_load * freq) / pcpu->policy_max;
 
+#ifdef CONFIG_ALUCARD_HOTPLUG
+	pcpu->cpu_load = cur_load;
+#endif
+
 	if (!pcpu->avg_load_maxfreq) {
 		/* This is the first sample in this window*/
 		pcpu->avg_load_maxfreq = load_at_max_freq;
@@ -159,6 +169,9 @@ unsigned int report_load_at_max_freq(void)
 	int cpu;
 	struct cpu_load_data *pcpu;
 	unsigned int total_load = 0;
+#ifdef CONFIG_MSM_HOTPLUG 
+	unsigned int max_load = 0;
+#endif 
 
 	for_each_online_cpu(cpu) {
 		pcpu = &per_cpu(cpuload, cpu);
@@ -166,9 +179,15 @@ unsigned int report_load_at_max_freq(void)
 		update_average_load(pcpu->cur_freq, cpu);
 		total_load += pcpu->avg_load_maxfreq;
 		pcpu->cur_load_maxfreq = pcpu->avg_load_maxfreq;
+#ifdef CONFIG_MSM_HOTPLUG 
+		max_load = max(max_load, pcpu->avg_load_maxfreq);
+#endif
 		pcpu->avg_load_maxfreq = 0;
 		mutex_unlock(&pcpu->cpu_load_mutex);
 	}
+#ifdef CONFIG_MSM_HOTPLUG 
+	max_load_maxfreq = max_load;
+#endif
 	return total_load;
 }
 
@@ -179,6 +198,22 @@ unsigned int report_avg_load_cpu(unsigned int cpu)
 
 	return pcpu->cur_load_maxfreq;
 }
+
+#ifdef CONFIG_MSM_HOTPLUG 
+unsigned int report_max_load_max_freq(void)
+{
+	return max_load_maxfreq;
+}
+#endif
+ 
+
+#ifdef CONFIG_ALUCARD_HOTPLUG
+unsigned int report_cpu_load(unsigned int cpu)
+{
+	struct cpu_load_data *pcpu = &per_cpu(cpuload, cpu);
+	return pcpu->cpu_load;
+}
+#endif
 
 static int cpufreq_transition_handler(struct notifier_block *nb,
 			unsigned long val, void *data)
@@ -210,9 +245,12 @@ static int cpu_hotplug_handler(struct notifier_block *nb,
 	switch (val) {
 	case CPU_ONLINE:
 		if (!this_cpu->cur_freq)
-			this_cpu->cur_freq = acpuclk_get_rate(cpu);
+			this_cpu->cur_freq = cpufreq_quick_get(cpu);
 	case CPU_ONLINE_FROZEN:
 		this_cpu->avg_load_maxfreq = 0;
+#ifdef CONFIG_ALUCARD_HOTPLUG
+		this_cpu->cpu_load = 0;
+#endif
 	}
 
 	return NOTIFY_OK;
@@ -429,7 +467,7 @@ static int __init msm_rq_stats_init(void)
 		cpufreq_get_policy(&cpu_policy, i);
 		pcpu->policy_max = cpu_policy.cpuinfo.max_freq;
 		if (cpu_online(i))
-			pcpu->cur_freq = acpuclk_get_rate(i);
+			pcpu->cur_freq = cpufreq_quick_get(i);
 		cpumask_copy(pcpu->related_cpus, cpu_policy.cpus);
 	}
 	freq_transition.notifier_call = cpufreq_transition_handler;

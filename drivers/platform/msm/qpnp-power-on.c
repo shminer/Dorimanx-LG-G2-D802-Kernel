@@ -83,7 +83,6 @@
 #ifdef CONFIG_PWRKEY_SUSPEND
 bool pwrkey_pressed = false;
 bool pwrkey_suspend = false;
-static int cnt = 0;
 module_param(pwrkey_suspend, bool, 0755);
 #endif
 
@@ -374,14 +373,10 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 	}
 	
 #ifdef CONFIG_PWRKEY_SUSPEND
-	if (pwrkey_suspend) {
-		if (cfg->key_code == KEY_POWER && cnt == 0) {
-			pwrkey_pressed = true;
-			cnt++;
-		} else {
-			cnt = 0;
-		}
-	}
+	if (pwrkey_suspend && cfg->key_code == KEY_POWER)
+		pwrkey_pressed = true;
+	else
+		pwrkey_pressed = false;
 #endif			
 	
 	input_report_key(pon->pon_input, cfg->key_code,
@@ -982,8 +977,11 @@ static int __devinit qpnp_pon_probe(struct spmi_device *spmi)
 	index = ffs(pon_sts);
 	if ((index > PON_REASON_MAX) || (index < 0))
 		index = 0;
-	pr_info("PMIC@SID%d Power-on reason: %s\n", pon->spmi->sid,
-			index ? qpnp_pon_reason[index - 1] : "Unknown");
+
+	cold_boot = !qpnp_pon_is_warm_reset();
+	pr_info("PMIC@SID%d Power-on reason: %s and '%s' boot\n",
+		pon->spmi->sid, index ? qpnp_pon_reason[index - 1] :
+		"Unknown", cold_boot ? "cold" : "warm");
 
 	rc = of_property_read_u32(pon->spmi->dev.of_node,
 				"qcom,pon-dbc-delay", &delay);

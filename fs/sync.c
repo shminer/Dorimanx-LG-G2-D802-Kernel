@@ -103,7 +103,7 @@ EXPORT_SYMBOL_GPL(sync_filesystems);
 #endif
 
 /*
- * sync everything.  Start out by waking pdflush, because that writes back
+ * sync everything.  Start out by waking flusher, because that writes back
  * all queues in parallel.
  */
 SYSCALL_DEFINE0(sync)
@@ -205,13 +205,12 @@ EXPORT_SYMBOL(vfs_fsync);
 
 static int do_fsync(unsigned int fd, int datasync)
 {
-	struct file *file;
+	struct fd f = fdget(fd);
 	int ret = -EBADF;
 
-	file = fget(fd);
-	if (file) {
-		ret = vfs_fsync(file, datasync);
-		fput(file);
+	if (f.file) {
+		ret = vfs_fsync(f.file, datasync);
+		fdput(f);
 	}
 	return ret;
 }

@@ -251,7 +251,7 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
  * Returns the global number of pages potentially available for dirty
  * page cache.  This is the base value for the global dirty limits.
  */
-unsigned long global_dirtyable_memory(void)
+static unsigned long global_dirtyable_memory(void)
 {
 	unsigned long x;
 
@@ -959,7 +959,7 @@ static void bdi_update_dirty_ratelimit(struct backing_dev_info *bdi,
 	 *	bdi->dirty_ratelimit = balanced_dirty_ratelimit;
 	 *
 	 * However to get a more stable dirty_ratelimit, the below elaborated
-	 * code makes use of task_ratelimit to filter out sigular points and
+	 * code makes use of task_ratelimit to filter out singular points and
 	 * limit the step size.
 	 *
 	 * The below code essentially only uses the relative value of
@@ -982,7 +982,7 @@ static void bdi_update_dirty_ratelimit(struct backing_dev_info *bdi,
 	 * feel and care are stable dirty rate and small position error.
 	 *
 	 * |task_ratelimit - dirty_ratelimit| is used to limit the step size
-	 * and filter out the sigular points of balanced_dirty_ratelimit. Which
+	 * and filter out the singular points of balanced_dirty_ratelimit. Which
 	 * keeps jumping around randomly and can even leap far away at times
 	 * due to the small 200ms estimation period of dirty_rate (we want to
 	 * keep that period small to reduce time lags).
@@ -1608,6 +1608,7 @@ void writeback_set_ratelimit(void)
 	unsigned long background_thresh;
 	unsigned long dirty_thresh;
 	global_dirty_limits(&background_thresh, &dirty_thresh);
+	global_dirty_limit = dirty_thresh;
 	ratelimit_pages = dirty_thresh / (num_online_cpus() * 32);
 	if (ratelimit_pages < 16)
 		ratelimit_pages = 16;

@@ -73,7 +73,7 @@ static int fm_pcmrx_switch_enable;
 static int srs_alsa_ctrl_ever_called;
 static int lsm_mux_slim_port;
 static int slim0_rx_aanc_fb_port;
-static int msm_route_ec_ref_rx = 3; /* NONE */
+static int msm_route_ec_ref_rx = 4; /* NONE */
 static uint32_t voc_session_id = ALL_SESSION_VSID;
 static int msm_route_ext_ec_ref = AFE_PORT_INVALID;
 
@@ -102,6 +102,10 @@ static const char * const mad_audio_mux_text[] = {
 #define INT_RX_VOL_GAIN 0x2000
 static int msm_route_fm_vol_control;
 static const DECLARE_TLV_DB_LINEAR(fm_rx_vol_gain, 0,
+			INT_RX_VOL_MAX_STEPS);
+
+static int msm_route_hfp_vol_control;
+static const DECLARE_TLV_DB_LINEAR(hfp_rx_vol_gain, 0,
 			INT_RX_VOL_MAX_STEPS);
 
 static int msm_route_multimedia2_vol_control;
@@ -1095,6 +1099,23 @@ static int msm_routing_set_fm_vol_mixer(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int msm_routing_get_hfp_vol_mixer(struct snd_kcontrol *kcontrol,
+					 struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = msm_route_hfp_vol_control;
+	return 0;
+}
+
+static int msm_routing_set_hfp_vol_mixer(struct snd_kcontrol *kcontrol,
+					 struct snd_ctl_elem_value *ucontrol)
+{
+	afe_loopback_gain(INT_BT_SCO_TX , ucontrol->value.integer.value[0]);
+
+	msm_route_hfp_vol_control = ucontrol->value.integer.value[0];
+
+	return 0;
+}
+
 static int msm_routing_get_multimedia2_vol_mixer(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
@@ -1419,6 +1440,10 @@ static int msm_routing_ec_ref_rx_put(struct snd_kcontrol *kcontrol,
 		msm_route_ec_ref_rx = 1;
 		ec_ref_port_id = AFE_PORT_ID_PRIMARY_MI2S_RX;
 		break;
+	case 2:
+		msm_route_ec_ref_rx = 2;
+		ec_ref_port_id = AFE_PORT_ID_SECONDARY_MI2S_RX;
+		break;
 	default:
 		msm_route_ec_ref_rx = 3; /* NONE */
 		ec_ref_port_id = -1;
@@ -1431,10 +1456,10 @@ static int msm_routing_ec_ref_rx_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static const char *const ec_ref_rx[] = { "SLIM_RX", "I2S_RX", "PROXY_RX",
-	"NONE" };
+static const char *const ec_ref_rx[] = { "SLIM_RX", "I2S_RX", "SEC_I2S_RX",
+	"PROXY_RX", "NONE" };
 static const struct soc_enum msm_route_ec_ref_rx_enum[] = {
-	SOC_ENUM_SINGLE_EXT(4, ec_ref_rx),
+	SOC_ENUM_SINGLE_EXT(5, ec_ref_rx),
 };
 
 static const struct snd_kcontrol_new ec_ref_rx_mixer_controls[] = {
@@ -2766,6 +2791,12 @@ static const struct snd_kcontrol_new int_fm_vol_mixer_controls[] = {
 	SOC_SINGLE_EXT_TLV("Internal FM RX Volume", SND_SOC_NOPM, 0,
 	INT_RX_VOL_GAIN, 0, msm_routing_get_fm_vol_mixer,
 	msm_routing_set_fm_vol_mixer, fm_rx_vol_gain),
+};
+
+static const struct snd_kcontrol_new int_hfp_vol_mixer_controls[] = {
+	SOC_SINGLE_EXT_TLV("Internal HFP RX Volume", SND_SOC_NOPM, 0,
+	INT_RX_VOL_GAIN, 0, msm_routing_get_hfp_vol_mixer,
+	msm_routing_set_hfp_vol_mixer, hfp_rx_vol_gain),
 };
 
 static const struct snd_kcontrol_new multimedia2_vol_mixer_controls[] = {
@@ -4357,6 +4388,10 @@ static int msm_routing_probe(struct snd_soc_platform *platform)
 	snd_soc_add_platform_controls(platform,
 				int_fm_vol_mixer_controls,
 			ARRAY_SIZE(int_fm_vol_mixer_controls));
+
+	snd_soc_add_platform_controls(platform,
+				int_hfp_vol_mixer_controls,
+			ARRAY_SIZE(int_hfp_vol_mixer_controls));
 
 	snd_soc_add_platform_controls(platform,
 				eq_enable_mixer_controls,
