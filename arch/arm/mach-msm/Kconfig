@@ -1653,7 +1653,7 @@ config MSM_SMP2P_TEST
 config MSM_RESET_MODEM
 	tristate "Reset Modem Driver"
 	depends on MSM_SMD
-	default y
+	default m
 	help
 	  Allows the user to reset the modem through a device node.
 
@@ -2050,7 +2050,7 @@ config MSM_VREG_SWITCH_INVERTED
 
 config MSM_DMA_TEST
 	tristate "MSM DMA test module"
-	default y
+	default m
 	help
 	  Intended to be compiled as a module.  Provides a device node
 	  and ioctls for testing the MSM dma system.
