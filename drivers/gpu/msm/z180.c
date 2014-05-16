@@ -94,7 +94,7 @@ enum z180_cmdwindow_type {
 #define Z180_CMDWINDOW_ADDR_SHIFT		8
 
 static int z180_init(struct kgsl_device *device);
-static int z180_start(struct kgsl_device *device, int priority);
+static int z180_start(struct kgsl_device *device);
 static int z180_stop(struct kgsl_device *device);
 static int z180_wait(struct kgsl_device *device,
 				struct kgsl_context *context,
@@ -561,7 +561,8 @@ static int __devinit z180_probe(struct platform_device *pdev)
 	if (status)
 		goto error_close_ringbuffer;
 
-	kgsl_pwrscale_init(&pdev->dev, CONFIG_MSM_Z180_DEFAULT_GOVERNOR);
+	kgsl_pwrscale_init(device);
+	kgsl_pwrscale_attach_policy(device, Z180_DEFAULT_PWRSCALE_POLICY);
 
 	return status;
 
@@ -596,7 +597,7 @@ static int z180_init(struct kgsl_device *device)
 	return 0;
 }
 
-static int z180_start(struct kgsl_device *device, int priority)
+static int z180_start(struct kgsl_device *device)
 {
 	int status = 0;
 
@@ -956,16 +957,18 @@ z180_drawctxt_destroy(struct kgsl_context *context)
 static void z180_power_stats(struct kgsl_device *device,
 			    struct kgsl_power_stats *stats)
 {
-	struct kgsl_pwrscale *pwrscale = &device->pwrscale;
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 	s64 tmp = ktime_to_us(ktime_get());
 
-	memset(stats, 0, sizeof(stats));
-	if (pwrscale->on_time == 0) {
-		pwrscale->on_time = tmp;
+	if (pwr->time == 0) {
+		pwr->time = tmp;
+		stats->total_time = 0;
 		stats->busy_time = 0;
 	} else {
-		stats->busy_time = tmp - pwrscale->on_time;
-		pwrscale->on_time = tmp;
+		stats->total_time = tmp - pwr->time;
+		pwr->time = tmp;
+		stats->busy_time = tmp - device->on_time;
+		device->on_time = tmp;
 	}
 }
 
