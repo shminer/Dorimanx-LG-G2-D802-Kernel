@@ -545,8 +545,8 @@ static void msm_hsl_start_tx(struct uart_port *port)
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
 #ifdef CONFIG_EARJACK_DEBUGGER
-        if (!(lge_get_uart_mode() & UART_MODE_EN_BMSK) && is_console(port))
-                return;
+	if (!(lge_get_uart_mode() & UART_MODE_EN_BMSK) && is_console(port))
+		return;
 #endif
 
 	if (port->suspended) {
@@ -781,9 +781,9 @@ static unsigned int msm_hsl_tx_empty(struct uart_port *port)
 	unsigned int ret;
 	unsigned int vid = UART_TO_MSM(port)->ver_id;
 
-#ifdef CONFIG_EARJACK_DEBUGGER
-        if (!(lge_get_uart_mode() & UART_MODE_EN_BMSK) && is_console(port))
-                return 1;
+#if defined(CONFIG_EARJACK_DEBUGGER)
+	if (!(lge_get_uart_mode() & UART_MODE_EN_BMSK) && is_console(port))
+		return 1;
 
 	if (is_console(port) && console_disabled())
 		return 1;
@@ -1017,6 +1017,7 @@ static void msm_hsl_deinit_clock(struct uart_port *port)
 	clk_en(port, 0);
 }
 #endif
+
 static int msm_hsl_startup(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
@@ -1131,16 +1132,11 @@ static void msm_hsl_set_termios(struct uart_port *port,
 	 */
 	baud = uart_get_baud_rate(port, termios, old, 200, 4000000);
 
-	/*                                                    
-                     
-                                
-                                                                         
- */
-	#ifdef CONFIG_LGE_IRDA_KDDI
-	if(port->line == 3){
+#ifdef CONFIG_LGE_IRDA_KDDI
+	if (port->line == 3) {
 		msm_hsl_write(port, 0x03, UARTDM_IRDA_ADDR);
 	}
-	#endif
+#endif
  
 	/*
 	 * Due to non-availability of 3.2 Mbps baud rate as standard baud rate
@@ -1514,7 +1510,7 @@ static void msm_hsl_console_write(struct console *co, const char *s,
 
 	BUG_ON(co->index < 0 || co->index >= UART_NR);
 
-#ifdef CONFIG_EARJACK_DEBUGGER
+#if defined(CONFIG_EARJACK_DEBUGGER)
 	if (!(lge_get_uart_mode() & UART_MODE_EN_BMSK))
 		return;
 
@@ -1969,15 +1965,13 @@ static int __devinit msm_serial_hsl_probe(struct platform_device *pdev)
 	if (!(lge_get_uart_mode() & UART_MODE_ALWAYS_ON_BMSK) && is_console(port))
 	{
 		lge_set_uart_mode(lge_get_uart_mode() | UART_MODE_INIT_BMSK);
-		if (lge_get_uart_mode() & UART_MODE_EN_BMSK)
-		{
+		if (lge_get_uart_mode() & UART_MODE_EN_BMSK) {
 			pr_debug("%s(): Enable uart console from LK\n", __func__);
 			pm_runtime_get(port->dev);
 		}
 	}
 #endif
 err:
-
 	return ret;
 }
 
@@ -2009,7 +2003,6 @@ static int __devexit msm_serial_hsl_remove(struct platform_device *pdev)
 
 	return 0;
 }
-
 
 #ifdef CONFIG_PM
 static int msm_serial_hsl_suspend(struct device *dev)

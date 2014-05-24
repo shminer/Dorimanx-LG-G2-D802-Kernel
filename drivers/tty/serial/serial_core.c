@@ -1247,11 +1247,9 @@ static void uart_set_termios(struct tty_struct *tty,
 	}
 }
 
-/*                                                                                                     */
 #ifdef CONFIG_LGE_BLUESLEEP
 extern void bluesleep_forced_stop(void);
-#endif /*                      */
-/*                                                        */
+#endif
 
 /*
  * In 2.4.5, calls to this will be serialized via the BKL in
@@ -1273,13 +1271,11 @@ static void uart_close(struct tty_struct *tty, struct file *filp)
 
 	pr_debug("uart_close(%d) called\n", uport->line);
 
-/*                                                                                                     */
 #ifdef CONFIG_LGE_BLUESLEEP
 	if (!strcmp(tty->name, "ttyHS99")) {
 		bluesleep_forced_stop();
 	}
-#endif /*                      */
-/*                                                        */
+#endif
 
 	if (tty_port_close_start(port, tty, filp) == 0)
 		return;
@@ -2307,6 +2303,7 @@ void uart_unregister_driver(struct uart_driver *drv)
 	tty_unregister_driver(p);
 	put_tty_driver(p);
 	kfree(drv->state);
+	drv->state = NULL;
 	drv->tty_driver = NULL;
 }
 

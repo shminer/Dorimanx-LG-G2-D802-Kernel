@@ -346,6 +346,9 @@ static struct of_device_id msm_hs_match_table[] = {
 #define BLSP_UART_CLK_FMAX 63160000
 
 static struct dentry *debug_base;
+#ifdef CONFIG_LGE_BLUESLEEP
+static struct msm_hs_port q_uart_port[UARTDM_NR];
+#endif
 static struct platform_driver msm_serial_hs_platform_driver;
 static struct uart_driver msm_hs_driver;
 static struct uart_ops msm_hs_ops;
@@ -3210,12 +3213,13 @@ deregister_bam:
 	return rc;
 }
 
-/*                                                                    */
-/*                                                                 */
 #ifdef CONFIG_LGE_BLUESLEEP
-struct uart_port* msm_hs_get_bt_uport(unsigned int line)
+struct uart_port* msm_hs_get_bt_uport(unsigned int port_index)
 {
-	return &q_uart_port[line].uport;
+	struct uart_state *state = msm_hs_driver.state + port_index;
+
+	return state->uart_port;
+//	return &q_uart_port[line].uport;
 }
 EXPORT_SYMBOL(msm_hs_get_bt_uport);
 
@@ -3223,11 +3227,7 @@ EXPORT_SYMBOL(msm_hs_get_bt_uport);
 int msm_hs_get_bt_uport_clock_state(struct uart_port *uport)
 {
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
-	//unsigned long flags;
 	int ret = CLOCK_REQUEST_UNAVAILABLE;
-
-	//mutex_lock(&msm_uport->clk_mutex);
-	//spin_lock_irqsave(&uport->lock, flags);
 
 	switch (msm_uport->clk_state) {
 		case MSM_HS_CLK_ON:
@@ -3242,15 +3242,10 @@ int msm_hs_get_bt_uport_clock_state(struct uart_port *uport)
 			break;
 	}
 
-	//spin_unlock_irqrestore(&uport->lock, flags);
-	//mutex_unlock(&msm_uport->clk_mutex);
-
 	return ret;
 }
 EXPORT_SYMBOL(msm_hs_get_bt_uport_clock_state);
-#endif /*                      */
-/*                                                                 */
-/*                                                        */
+#endif
 
 #define BLSP_UART_NR	12
 static int deviceid[BLSP_UART_NR] = {0};
