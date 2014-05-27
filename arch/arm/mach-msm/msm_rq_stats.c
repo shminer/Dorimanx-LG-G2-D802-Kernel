@@ -46,7 +46,6 @@ struct cpu_load_data {
 #else
 	u64 prev_cpu_idle;
 	u64 prev_cpu_wall;
-	u64 prev_cpu_iowait;
 #endif
 	unsigned int avg_load_maxfreq;
 	unsigned int cur_load_maxfreq;
@@ -58,18 +57,9 @@ struct cpu_load_data {
 	struct mutex cpu_load_mutex;
 };
 
+static unsigned int lock_hotplug_disabled = 1;
+
 static DEFINE_PER_CPU(struct cpu_load_data, cpuload);
-
-static inline u64 get_cpu_iowait_time(unsigned int cpu,
-							u64 *wall)
-{
-	u64 iowait_time = get_cpu_iowait_time_us(cpu, wall);
-
-	if (iowait_time == -1ULL)
-		return 0;
-
-	return iowait_time;
-}
 
 static int update_average_load(unsigned int freq, unsigned int cpu)
 {
@@ -78,8 +68,8 @@ static int update_average_load(unsigned int freq, unsigned int cpu)
 	u64 cur_wall_time;
 	unsigned int wall_time;
 #else
-	u64 cur_wall_time, cur_idle_time, cur_iowait_time;
-	unsigned int idle_time, wall_time, iowait_time;
+	u64 cur_wall_time, cur_idle_time;
+	unsigned int idle_time, wall_time;
 #endif
 	unsigned int cur_load, load_at_max_freq;
 	struct cpu_load_data *pcpu = &per_cpu(cpuload, cpu);
@@ -105,12 +95,6 @@ static int update_average_load(unsigned int freq, unsigned int cpu)
 	idle_time = (unsigned int) (cur_idle_time - pcpu->prev_cpu_idle);
 	pcpu->prev_cpu_idle = cur_idle_time;
 
-	iowait_time = (unsigned int) (cur_iowait_time - pcpu->prev_cpu_iowait);
-	pcpu->prev_cpu_iowait = cur_iowait_time;
-
-	if (idle_time >= iowait_time)
-		idle_time -= iowait_time;
-
 	if (unlikely(!wall_time || wall_time < idle_time))
 		return 0;
 
@@ -118,7 +102,7 @@ static int update_average_load(unsigned int freq, unsigned int cpu)
 #endif
 
 	/* Calculate the scaled load across CPU */
-	load_at_max_freq = (cur_load * policy.cur) / policy.max;
+	load_at_max_freq = (cur_load * freq) / policy.max;
 
 	if (!pcpu->avg_load_maxfreq) {
 		/* This is the first sample in this window*/
@@ -195,7 +179,7 @@ static int cpu_hotplug_handler(struct notifier_block *nb,
 	switch (val) {
 	case CPU_ONLINE:
 		if (!this_cpu->cur_freq)
-			this_cpu->cur_freq = cpufreq_quick_get(cpu);
+			this_cpu->cur_freq = acpuclk_get_rate(cpu);
 	case CPU_ONLINE_FROZEN:
 		this_cpu->avg_load_maxfreq = 0;
 	}
@@ -213,11 +197,13 @@ static int system_suspend_handler(struct notifier_block *nb,
 	case PM_POST_HIBERNATION:
 	case PM_POST_SUSPEND:
 	case PM_POST_RESTORE:
-		rq_info.hotplug_disabled = 0;
+		if (!lock_hotplug_disabled)
+			rq_info.hotplug_disabled = 0;
 		break;
 	case PM_HIBERNATION_PREPARE:
 	case PM_SUSPEND_PREPARE:
-		rq_info.hotplug_disabled = 1;
+		if (!lock_hotplug_disabled)
+			rq_info.hotplug_disabled = 1;
 		break;
 	default:
 		return NOTIFY_DONE;
@@ -256,6 +242,7 @@ static ssize_t store_hotplug_disable(struct kobject *kobj,
 		return -EINVAL;
 
 	rq_info.hotplug_disabled = val;
+	lock_hotplug_disabled = val;
 	spin_unlock_irqrestore(&rq_lock, flags);
 
 	return count;
@@ -429,6 +416,7 @@ static int __init msm_rq_stats_init(void)
 	rq_info.rq_poll_last_jiffy = 0;
 	rq_info.def_timer_last_jiffy = 0;
 	rq_info.hotplug_disabled = 1;
+	lock_hotplug_disabled = 1;
 	ret = init_rq_attribs();
 
 	rq_info.init = 1;
@@ -439,11 +427,11 @@ static int __init msm_rq_stats_init(void)
 		cpufreq_get_policy(&cpu_policy, i);
 		pcpu->policy_max = cpu_policy.max;
 		if (cpu_online(i))
-			pcpu->cur_freq = cpu_policy.cur;
-		cpumask_copy(pcpu->related_cpus, cpu_policy.cpus);
+			pcpu->cur_freq = acpuclk_get_rate(i);
 #ifdef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
 		pcpu->prev_cpu_wall = ktime_to_us(ktime_get());
 #endif
+		cpumask_copy(pcpu->related_cpus, cpu_policy.cpus);
 	}
 	freq_transition.notifier_call = cpufreq_transition_handler;
 	cpu_hotplug.notifier_call = cpu_hotplug_handler;

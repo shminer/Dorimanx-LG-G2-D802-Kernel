@@ -81,16 +81,6 @@
 static void adreno_start_work(struct work_struct *work);
 static void adreno_input_work(struct work_struct *work);
 
-/*
- * The default values for the simpleondemand governor are 90 and 5,
- * we use different values here.
- * They have to be tuned and compare with the tz governor anyway.
- */
-static struct devfreq_simple_ondemand_data adreno_ondemand_data = {
-	.upthreshold = 80,
-	.downdifferential = 20,
-};
-
 static struct devfreq_msm_adreno_tz_data adreno_tz_data = {
 	.bus = {
 		.max = 550,
@@ -98,18 +88,12 @@ static struct devfreq_msm_adreno_tz_data adreno_tz_data = {
 	.device_id = KGSL_DEVICE_3D0,
 };
 
-static const struct devfreq_governor_data adreno_governors[] = {
-	{ .name = "simple_ondemand", .data = &adreno_ondemand_data },
-	{ .name = "msm-adreno-tz", .data = &adreno_tz_data },
-};
-
 static const struct kgsl_functable adreno_functable;
 
 static struct adreno_device device_3d0 = {
 	.dev = {
 		KGSL_DEVICE_COMMON_INIT(device_3d0.dev),
-		.pwrscale = KGSL_PWRSCALE_INIT(adreno_governors,
-					ARRAY_SIZE(adreno_governors)),
+		.pwrscale = KGSL_PWRSCALE_INIT(&adreno_tz_data),
 		.name = DEVICE_3D0_NAME,
 		.id = KGSL_DEVICE_3D0,
 		.mh = {
@@ -1156,11 +1140,8 @@ static int adreno_iommu_setstate(struct kgsl_device *device,
 	num_iommu_units = kgsl_mmu_get_num_iommu_units(&device->mmu);
 
 	context = kgsl_context_get(device, context_id);
-	if (!context) {
-		kgsl_mmu_device_setstate(&device->mmu, flags);
-		return 0;
-	}
-	adreno_ctx = ADRENO_CONTEXT(context);
+	if (context)
+		adreno_ctx = ADRENO_CONTEXT(context);
 
 	result = kgsl_mmu_enable_clk(&device->mmu, KGSL_IOMMU_CONTEXT_USER);
 
@@ -1207,9 +1188,11 @@ static int adreno_iommu_setstate(struct kgsl_device *device,
 	 * after the command has been retired
 	 */
 	if (result)
-		kgsl_mmu_disable_clk_on_ts(&device->mmu, 0, false);
+		kgsl_mmu_disable_clk(&device->mmu,
+						KGSL_IOMMU_CONTEXT_USER);
 	else
-		kgsl_mmu_disable_clk_on_ts(&device->mmu, rb->global_ts, true);
+		kgsl_mmu_disable_clk_on_ts(&device->mmu, rb->global_ts,
+						KGSL_IOMMU_CONTEXT_USER);
 
 done:
 	kgsl_context_put(context);
@@ -2055,7 +2038,8 @@ static int _adreno_start(struct adreno_device *adreno_dev)
 
 	device->reset_counter++;
 
-	set_bit(ADRENO_DEVICE_STARTED, &adreno_dev->priv); 
+	set_bit(ADRENO_DEVICE_STARTED, &adreno_dev->priv);
+
 	return 0;
 
 error_rb_stop:
@@ -2172,7 +2156,8 @@ static int adreno_stop(struct kgsl_device *device)
 
 	kgsl_cffdump_close(device);
 
-	clear_bit(ADRENO_DEVICE_STARTED, &adreno_dev->priv); 
+	clear_bit(ADRENO_DEVICE_STARTED, &adreno_dev->priv);
+
 	return 0;
 }
 
@@ -2338,15 +2323,33 @@ static int _ft_pagefault_policy_store(struct device *dev,
 				     const char *buf, size_t count)
 {
 	struct adreno_device *adreno_dev = _get_adreno_dev(dev);
-	int ret;
+	int ret = 0;
+	unsigned int policy = 0;
 	if (adreno_dev == NULL)
 		return 0;
 
 	mutex_lock(&adreno_dev->dev.mutex);
-	ret = _ft_sysfs_store(buf, count, &adreno_dev->ft_pf_policy);
+
+	/* MMU option changed call function to reset MMU options */
+	if (count != _ft_sysfs_store(buf, count, &policy))
+		ret = -EINVAL;
+
+	if (!ret) {
+		policy &= (KGSL_FT_PAGEFAULT_INT_ENABLE |
+				KGSL_FT_PAGEFAULT_GPUHALT_ENABLE |
+				KGSL_FT_PAGEFAULT_LOG_ONE_PER_PAGE |
+				KGSL_FT_PAGEFAULT_LOG_ONE_PER_INT);
+		ret = kgsl_mmu_set_pagefault_policy(&(adreno_dev->dev.mmu),
+				adreno_dev->ft_pf_policy);
+		if (!ret)
+			adreno_dev->ft_pf_policy = policy;
+	}
 	mutex_unlock(&adreno_dev->dev.mutex);
 
-	return ret;
+	if (!ret)
+		return count;
+	else
+		return 0;
 }
 
 /**
@@ -2397,9 +2400,12 @@ static int _ft_fast_hang_detect_store(struct device *dev,
 
 	if (tmp != adreno_dev->fast_hang_detect) {
 		if (adreno_dev->fast_hang_detect) {
-			if (adreno_dev->gpudev->fault_detect_start)
+			if (adreno_dev->gpudev->fault_detect_start &&
+				!kgsl_active_count_get(&adreno_dev->dev)) {
 				adreno_dev->gpudev->fault_detect_start(
 					adreno_dev);
+				kgsl_active_count_put(&adreno_dev->dev);
+			}
 		} else {
 			if (adreno_dev->gpudev->fault_detect_stop)
 				adreno_dev->gpudev->fault_detect_stop(
@@ -2667,12 +2673,56 @@ static int adreno_getproperty(struct kgsl_device *device,
 	return status;
 }
 
-static int adreno_setproperty(struct kgsl_device *device,
+static int adreno_set_constraint(struct kgsl_device *device,
+				struct kgsl_context *context,
+				struct kgsl_device_constraint *constraint)
+{
+	int status = 0;
+
+	switch (constraint->type) {
+	case KGSL_CONSTRAINT_PWRLEVEL: {
+		struct kgsl_device_constraint_pwrlevel pwr;
+
+		if (constraint->size != sizeof(pwr)) {
+			status = -EINVAL;
+			break;
+		}
+
+		if (copy_from_user(&pwr,
+				(void __user *)constraint->data,
+				sizeof(pwr))) {
+			status = -EFAULT;
+			break;
+		}
+		if (pwr.level >= KGSL_CONSTRAINT_PWR_MAXLEVELS) {
+			status = -EINVAL;
+			break;
+		}
+
+		context->pwr_constraint.type =
+				KGSL_CONSTRAINT_PWRLEVEL;
+		context->pwr_constraint.sub_type = pwr.level;
+		}
+		break;
+	case KGSL_CONSTRAINT_NONE:
+		context->pwr_constraint.type = KGSL_CONSTRAINT_NONE;
+		break;
+
+	default:
+		status = -EINVAL;
+		break;
+	}
+
+	return status;
+}
+
+static int adreno_setproperty(struct kgsl_device_private *dev_priv,
 				enum kgsl_property_type type,
 				void *value,
 				unsigned int sizebytes)
 {
 	int status = -EINVAL;
+	struct kgsl_device *device = dev_priv->device;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
 	switch (type) {
@@ -2708,6 +2758,28 @@ static int adreno_setproperty(struct kgsl_device *device,
 			}
 
 			status = 0;
+		}
+		break;
+	case KGSL_PROP_PWR_CONSTRAINT: {
+			struct kgsl_device_constraint constraint;
+			struct kgsl_context *context;
+
+			if (sizebytes != sizeof(constraint))
+				break;
+
+			if (copy_from_user(&constraint, value,
+				sizeof(constraint))) {
+				status = -EFAULT;
+				break;
+			}
+
+			context = kgsl_context_get_owner(dev_priv,
+							constraint.context_id);
+			if (context == NULL)
+				break;
+			status = adreno_set_constraint(device, context,
+								&constraint);
+			kgsl_context_put(context);
 		}
 		break;
 	default:
@@ -3107,7 +3179,7 @@ static int adreno_waittimestamp(struct kgsl_device *device,
 		return -EINVAL;
 
 	ret = adreno_drawctxt_wait(ADRENO_DEVICE(device), context,
-		timestamp, msecs_to_jiffies(msecs));
+		timestamp, msecs);
 
 	/* If the context got invalidated then return a specific error */
 	drawctxt = ADRENO_CONTEXT(context);
