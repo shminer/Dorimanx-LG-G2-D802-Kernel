@@ -62,17 +62,17 @@ static struct msm_thermal_data msm_thermal_info;
 static struct msm_thermal_data msm_thermal_info_local = {
 	.sensor_id = 0,
 	.poll_ms = DEFAULT_POLLING_MS,
-	.limit_temp_degC = 75,
+	.limit_temp_degC = 80,
 	.temp_hysteresis_degC = 10,
 	.freq_step = 2,
 	.freq_control_mask = 0xf,
-	.core_limit_temp_degC = 70,
+	.core_limit_temp_degC = 80,
 	.core_temp_hysteresis_degC = 10,
 	.core_control_mask = 0xe,
 	.vdd_rstr_temp_degC = 5,
 	.vdd_rstr_temp_hyst_degC = 10,
-	.psm_temp_degC = 85,
-	.psm_temp_hyst_degC = 75,
+	.psm_temp_degC = 90,
+	.psm_temp_hyst_degC = 80,
 };
 static uint32_t thermal_limited_max_freq = MSM_CPUFREQ_NO_LIMIT;
 static struct delayed_work check_temp_work;
@@ -838,8 +838,6 @@ static void __cpuinit do_freq_control(long temp)
 	int cpu = 0;
 	uint32_t max_freq = thermal_limited_max_freq;
 
-	if (msm_thermal_info_local.limit_temp_degC > 75)
-		msm_thermal_info_local.limit_temp_degC = 75;
 
 	if (debug_mode == 1)
 		printk(KERN_ERR "pre-check do_freq_control temp[%u], \
