@@ -436,21 +436,6 @@ static bool is_factory_cable(void)
 	unsigned int cable_info;
 	cable_info = lge_pm_get_cable_type();
 
-#ifdef CONFIG_FORCE_FAST_CHARGE
-	if (fake_original_cable == FAKE_ORIGINAL_CABLE_ENABLE) {
-		return true;
-	} else {
-		if ((cable_info == CABLE_56K ||
-			cable_info == CABLE_130K ||
-			cable_info == CABLE_910K) ||
-			(cable_type == LT_CABLE_56K ||
-			cable_type == LT_CABLE_130K ||
-			cable_type == LT_CABLE_910K))
-			return true;
-		else
-			return false;
-	}
-#else
 	if ((cable_info == CABLE_56K ||
 		cable_info == CABLE_130K ||
 		cable_info == CABLE_910K) ||
@@ -460,7 +445,6 @@ static bool is_factory_cable(void)
 		return true;
 	else
 		return false;
-#endif
 }
 
 static bool is_factory_cable_130k(void)
@@ -468,23 +452,11 @@ static bool is_factory_cable_130k(void)
 	unsigned int cable_info;
 	cable_info = lge_pm_get_cable_type();
 
-#ifdef CONFIG_FORCE_FAST_CHARGE
-	if (fake_original_cable == FAKE_ORIGINAL_CABLE_ENABLE) {
-		return true;
-	} else {
-		if (cable_info == CABLE_130K ||
-			cable_type == LT_CABLE_130K)
-			return true;
-		else
-			return false;
-	}
-#else
 	if (cable_info == CABLE_130K ||
 		cable_type == LT_CABLE_130K)
 		return true;
 	else
 		return false;
-#endif
 }
 
 static unsigned int cable_smem_size;
@@ -734,23 +706,13 @@ static bool smb349_is_charger_present(struct i2c_client *client)
 
 	if (power_ok) {
 		voltage = smb349_get_usbin_adc();
-#ifdef CONFIG_FORCE_FAST_CHARGE
-		if (fake_original_cable == FAKE_ORIGINAL_CABLE_ENABLE) {
-			dc_charger_present = 1;
-			smb349_pr_info("Fake Original Cable Enabled");
-		}
-#endif
 #if SMB349_BOOSTBACK_WORKAROUND
 		smb349_pr_info("DC is present. DC_IN volt:%d\n", voltage);
 #else
 		pr_err("DC is present. DC_IN volt:%d\n", voltage);
 #endif
-	} else {
+	} else
 		pr_err("DC is missing.\n");
-#ifdef CONFIG_FORCE_FAST_CHARGE
-		dc_charger_present = 0;
-#endif
-	}
 
 	return power_ok;
 }
@@ -2320,6 +2282,12 @@ static void smb349_irq_worker(struct work_struct *work)
 #if defined(CONFIG_BQ51053B_CHARGER) && defined(CONFIG_WIRELESS_CHARGER)
 	int wlc_present =0;
 #endif
+
+#ifdef CONFIG_FORCE_FAST_CHARGE
+	int batt_temp_check;
+	int new_thermal_mitigation;
+#endif
+
 	struct smb349_struct *smb349_chg =
 		container_of(work, struct smb349_struct, irq_work.work);
 #if SMB349_BOOSTBACK_WORKAROUND
@@ -2338,7 +2306,6 @@ static void smb349_irq_worker(struct work_struct *work)
 	ret = smb349_read_block_reg(smb349_chg->client, IRQ_A_REG, IRQSTAT_NUM, irqstat);
 	if (ret) {
 		pr_err("Failed to read IRQ status block = %d\n", ret);
-		pr_info("smb349_irq_worker exit, smb349_read_block_reg failed");
 		return;
 	}
 
@@ -2348,9 +2315,6 @@ static void smb349_irq_worker(struct work_struct *work)
 	if ( smb349_console_silent && ( (irqstat[IRQSTAT_C] & 0x22 ) ||
 			(irqstat[IRQSTAT_D] & 0x0A) || (irqstat[IRQSTAT_E] & 0x0A ) ))
 		smb349_console_silent = 0;
-	else
-		if (smb349_console_silent && (dc_charger_present == 1))
-			smb349_console_silent = 0;
 
 	smb349_pr_info("[IRQ 35h~3Ah] A:0x%02X, B:0x%02X, C:0x%02X, D:0x%02X, E:0x%02X, F:0x%02X\n",
 		irqstat[0],irqstat[1], irqstat[2], irqstat[3], irqstat[4], irqstat[5]);
@@ -2412,10 +2376,61 @@ static void smb349_irq_worker(struct work_struct *work)
 	}
 
 #ifdef CONFIG_FORCE_FAST_CHARGE
-	if ((irqstat[IRQSTAT_D] & BIT(5)) || dc_charger_present == 1) {
-#else
-	if (irqstat[IRQSTAT_D] & BIT(5)) {
+
+	mutex_lock(&smb349_chg->lock);
+
+	if (smb349_chg->btm_state == BTM_HEALTH_OVERHEAT)
+		batt_temp_check = 1;
+	else
+		batt_temp_check = 0;
+
+	if (force_fast_charge == 2) {
+		switch (fast_charge_level) {
+			case FAST_CHARGE_500:
+				new_thermal_mitigation = 500;
+				break;
+			case FAST_CHARGE_900:
+				new_thermal_mitigation = 900;
+				break;
+			case FAST_CHARGE_1200:
+				new_thermal_mitigation = 1200;
+				break;
+			case FAST_CHARGE_1500:
+				new_thermal_mitigation = 1500;
+				break;
+			case FAST_CHARGE_1800:
+				new_thermal_mitigation = 1800;
+				break;
+			case FAST_CHARGE_2000:
+				new_thermal_mitigation = 2000;
+				break;
+			default:
+				break;
+		}
+	} else {
+		new_thermal_mitigation = 1600;
+	}
+
+	/*
+	 * if batt_temp_check = 1 then battery is 55c or more!
+	 * stop fast charge and set max 300ma
+	 */
+	if ((batt_temp_check == 1) && (smb349_thermal_mitigation != 300)) {
+		smb349_thermal_mitigation = 300;
+		the_smb349_chg->chg_current_te = smb349_thermal_mitigation;
+		cancel_delayed_work_sync(&the_smb349_chg->battemp_work);
+		schedule_delayed_work(&the_smb349_chg->battemp_work, HZ*1);
+	} else if (smb349_thermal_mitigation != new_thermal_mitigation) {
+		smb349_thermal_mitigation = new_thermal_mitigation;
+		the_smb349_chg->chg_current_te = smb349_thermal_mitigation;
+		cancel_delayed_work_sync(&the_smb349_chg->battemp_work);
+		schedule_delayed_work(&the_smb349_chg->battemp_work, HZ*1);
+	}
+
+	mutex_unlock(&smb349_chg->lock);
 #endif
+
+	if (irqstat[IRQSTAT_D] & BIT(5)) {
 		ret = smb349_read_reg(smb349_chg->client, STATUS_E_REG, &val);
 		if (ret < 0)
 			pr_err("Failed to AICL result rc=%d\n", ret);
@@ -2430,11 +2445,7 @@ static void smb349_irq_worker(struct work_struct *work)
 #endif
 	}
 
-#ifdef CONFIG_FORCE_FAST_CHARGE
-	if ((!(irqstat[IRQSTAT_E] & 0x01)) || dc_charger_present == 1) {
-#else
 	if (!(irqstat[IRQSTAT_E] & 0x01)) {
-#endif
 #if SMB349_BOOSTBACK_WORKAROUND
 		smb349_pr_info("[BH] DC is present. DC_IN volt:%d\n", smb349_get_usbin_adc());
 #else
