@@ -191,6 +191,10 @@ static int msm_compr_set_volume(struct snd_compr_stream *cstream,
 
 	pr_debug("%s: volume_l %d volume_r %d\n",
 		__func__, volume_l, volume_r);
+	if (!cstream || !cstream->runtime) {
+		pr_err("%s: session not active\n", __func__);
+		return -EPERM;
+	}
 	prtd = cstream->runtime->private_data;
 	if (prtd && prtd->audio_client) {
 		if (volume_l != volume_r) {
@@ -543,12 +547,6 @@ static int msm_compr_configure_dsp(struct snd_compr_stream *cstream)
 #endif
 	int dir = IN, ret = 0;
 	struct audio_client *ac = prtd->audio_client;
-	struct asm_softpause_params softpause = {
-		.enable = SOFT_PAUSE_ENABLE,
-		.period = SOFT_PAUSE_PERIOD,
-		.step = SOFT_PAUSE_STEP,
-		.rampingcurve = SOFT_PAUSE_CURVE_LINEAR,
-	};
 	struct asm_softvolume_params softvol = {
 		.period = SOFT_VOLUME_PERIOD,
 		.step = SOFT_VOLUME_STEP,
@@ -580,11 +578,6 @@ static int msm_compr_configure_dsp(struct snd_compr_stream *cstream)
 	ret = msm_compr_set_volume(cstream, 0, 0);
 	if (ret < 0)
 		pr_err("%s : Set Volume failed : %d", __func__, ret);
-
-	ret = q6asm_set_softpause(ac, &softpause);
-	if (ret < 0)
-		pr_err("%s: Send SoftPause Param failed ret=%d\n",
-			__func__, ret);
 
 	ret = q6asm_set_softvolume(ac, &softvol);
 	if (ret < 0)
@@ -647,6 +640,7 @@ static int msm_compr_open(struct snd_compr_stream *cstream)
 		 kzalloc(sizeof(struct msm_compr_audio_effects), GFP_KERNEL);
 	if (!pdata->audio_effects[rtd->dai_link->be_id]) {
 		pr_err("%s: Could not allocate memory for effects\n", __func__);
+		pdata->cstream[rtd->dai_link->be_id] = NULL;
 		kfree(prtd);
 		return -ENOMEM;
 	}
@@ -655,6 +649,8 @@ static int msm_compr_open(struct snd_compr_stream *cstream)
 	if (!pdata->dec_params[rtd->dai_link->be_id]) {
 		pr_err("%s: Could not allocate memory for dec params\n",
 			__func__);
+		kfree(pdata->audio_effects[rtd->dai_link->be_id]);
+		pdata->cstream[rtd->dai_link->be_id] = NULL;
 		kfree(prtd);
 		return -ENOMEM;
 	}
@@ -664,6 +660,7 @@ static int msm_compr_open(struct snd_compr_stream *cstream)
 		pr_err("%s: Could not allocate memory for client\n", __func__);
 		kfree(pdata->audio_effects[rtd->dai_link->be_id]);
 		kfree(pdata->dec_params[rtd->dai_link->be_id]);
+		pdata->cstream[rtd->dai_link->be_id] = NULL;
 		kfree(prtd);
 		return -ENOMEM;
 	}
@@ -1282,6 +1279,7 @@ static int msm_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 			prtd->first_buffer = 1;
 			prtd->last_buffer = 0;
 			atomic_set(&prtd->drain, 0);
+			atomic_set(&prtd->xrun, 1);
 			q6asm_run_nowait(prtd->audio_client, 0, 0, 0);
 			spin_unlock_irqrestore(&prtd->lock, flags);
 		}

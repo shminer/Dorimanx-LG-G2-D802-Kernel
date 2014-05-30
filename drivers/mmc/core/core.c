@@ -707,11 +707,11 @@ static int mmc_wait_for_data_req_done(struct mmc_host *host,
 	struct mmc_context_info *context_info = &host->context_info;
 	bool pending_is_urgent = false;
 	bool is_urgent = false;
-	int err;
+	int err, ret;
 	unsigned long flags;
 
 	while (1) {
-		wait_io_event_interruptible(context_info->wait,
+		ret = wait_io_event_interruptible(context_info->wait,
 				(context_info->is_done_rcv ||
 				 context_info->is_new_req  ||
 				 context_info->is_urgent));
@@ -764,7 +764,7 @@ static int mmc_wait_for_data_req_done(struct mmc_host *host,
 				err = MMC_BLK_NEW_REQUEST;
 				break; /* return err */
 			}
-		} else {
+		} else if (context_info->is_urgent) {
 			/*
 			 * The case when block layer sent next urgent
 			 * notification before it receives end_io on
@@ -816,6 +816,11 @@ static int mmc_wait_for_data_req_done(struct mmc_host *host,
 				pending_is_urgent = true;
 				continue; /* wait for done/new/urgent event */
 			}
+		} else {
+			pr_warn("%s: mmc thread unblocked from waiting by signal, ret=%d\n",
+					mmc_hostname(host),
+					ret);
+			continue;
 		}
 	} /* while */
 	return err;
@@ -3306,7 +3311,8 @@ void mmc_rescan(struct work_struct *work)
 	mmc_release_host(host);
 	mmc_rpm_release(host, &host->class_dev);
  out:
-	if (extend_wakelock)
+	/* only extend the wakelock, if suspend has not started yet */
+	if (extend_wakelock && !host->rescan_disable)
 		wake_lock_timeout(&host->detect_wake_lock, HZ / 2);
 #ifdef CONFIG_MACH_LGE
 /*
@@ -3698,15 +3704,14 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 			spin_unlock_irqrestore(&host->lock, flags);
 			break;
 		}
+
+		/* since its suspending anyway, disable rescan */
+		host->rescan_disable = 1;
 		spin_unlock_irqrestore(&host->lock, flags);
 
 		/* Wait for pending detect work to be completed */
 		if (!(host->caps & MMC_CAP_NEEDS_POLL))
 			flush_work(&host->detect.work);
-
-		spin_lock_irqsave(&host->lock, flags);
-		host->rescan_disable = 1;
-		spin_unlock_irqrestore(&host->lock, flags);
 
 		/*
 		 * In some cases, the detect work might be scheduled
@@ -3714,6 +3719,13 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 		 * Cancel such the scheduled works.
 		 */
 		cancel_delayed_work_sync(&host->detect);
+
+		/*
+		 * It is possible that the wake-lock has been acquired, since
+		 * its being suspended, release the wakelock
+		 */
+		if (wake_lock_active(&host->detect_wake_lock))
+			wake_unlock(&host->detect_wake_lock);
 
 		if (!host->bus_ops || host->bus_ops->suspend)
 			break;
