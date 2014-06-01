@@ -1,18 +1,15 @@
 /*
- * Author: Paul Reioux aka Faux123 <reioux@gmail.com>
+ * Intelli Hotplug Driver
  *
- * Copyright 2012~2014 Paul Reioux
+ * Copyright (c) 2013-2014, Paul Reioux <reioux@gmail.com>
+ * Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  */
+
 #include <linux/workqueue.h>
 #include <linux/cpu.h>
 #include <linux/sched.h>
@@ -30,7 +27,7 @@
 #include <linux/cpufreq.h>
 
 #define INTELLI_PLUG_MAJOR_VERSION	3
-#define INTELLI_PLUG_MINOR_VERSION	6
+#define INTELLI_PLUG_MINOR_VERSION	7
 
 #define BUSY_PERSISTENCE		10
 #define DUAL_CORE_PERSISTENCE		7
@@ -45,11 +42,14 @@
 #define RESUME_SAMPLING_MS		100 / 10
 #define START_DELAY_MS			100 * 20
 #define MIN_INPUT_INTERVAL		150 * 1000L
+#define BOOST_LOCK_DUR			2500 * 1000L
 
 static struct mutex intelli_plug_mutex;
-static u64 last_boost_time;
+static u64 last_boost_time, last_input;
+static unsigned int boosted_cpus = 2;
 
 static struct delayed_work intelli_plug_work;
+static struct delayed_work intelli_plug_boost;
 static struct workqueue_struct *intelliplug_wq;
 
 static unsigned int sampling_time = 10;
@@ -73,6 +73,7 @@ static unsigned int touch_boosted_cpus = 2;
 static unsigned int screen_off_max = UINT_MAX;
 
 /* HotPlug Driver Tuning */
+static u64 boost_lock_duration = BOOST_LOCK_DUR;
 static unsigned int def_sampling_ms = DEF_SAMPLING_MS;
 static unsigned int busy_sampling_ms = BUSY_SAMPLING_MS;
 static unsigned int dual_core_persistence = DUAL_CORE_PERSISTENCE;
@@ -196,6 +197,14 @@ static unsigned int calculate_thread_stats(void)
 	return nr_run;
 }
 
+static int boost_lock_check(void)
+{
+	if (num_online_cpus() <= boosted_cpus &&
+	    (ktime_to_us(ktime_get()) - last_input < boost_lock_duration))
+		return 1;
+	return 0;
+}
+
 static void __ref intelli_plug_work_fn(struct work_struct *work)
 {
 	unsigned int nr_run_stat;
@@ -203,7 +212,7 @@ static void __ref intelli_plug_work_fn(struct work_struct *work)
 	unsigned int online_cpus = 0;
 
 	int decision = 0;
-	int i;
+	int i, boost_locked;
 
 	nr_run_stat = calculate_thread_stats();
 	if (debug_intelli_plug)
@@ -213,6 +222,7 @@ static void __ref intelli_plug_work_fn(struct work_struct *work)
 	 * using msm rqstats
 	 */
 	online_cpus = num_online_cpus();
+
 	if (!eco_mode_active && !strict_mode_active && online_cpus < NR_CPUS) {
 		decision = mp_decision();
 		if (decision) {
@@ -252,17 +262,20 @@ static void __ref intelli_plug_work_fn(struct work_struct *work)
 		return;
 	}
 
+	boost_locked = boost_lock_check();
+
 	switch (cpu_count) {
 	case 1:
 		if (persist_count > 0)
 			persist_count--;
 		if (persist_count == 0) {
 			/* take down everyone */
-			for_each_online_cpu(i) {
-				if (i == 0)
-					continue;
-				cpu_down(i);
-			}
+			if (!boost_locked)
+				for_each_online_cpu(i) {
+					if (i == 0)
+						continue;
+					cpu_down(i);
+				}
 		}
 		if (debug_intelli_plug)
 			pr_info("case 1: %u\n", persist_count);
@@ -276,8 +289,9 @@ static void __ref intelli_plug_work_fn(struct work_struct *work)
 			for (i = 1; i < cpu_count; i++)
 				cpu_up(i);
 		} else {
-			for (i = 3; i >  1; i--)
-				cpu_down(i);
+			if (!boost_locked)
+				for (i = 3; i >  1; i--)
+					cpu_down(i);
 		}
 		if (debug_intelli_plug)
 			pr_info("case 2: %u\n", persist_count);
@@ -291,8 +305,9 @@ static void __ref intelli_plug_work_fn(struct work_struct *work)
 			for (i = 1; i < cpu_count; i++)
 				cpu_up(i);
 		} else {
-			for (i = 3; i > 2; i--)
-				cpu_down(i);
+			if (!boost_locked)
+				for (i = 3; i > 2; i--)
+					cpu_down(i);
 		}
 		if (debug_intelli_plug)
 			pr_info("case 3: %u\n", persist_count);
@@ -320,6 +335,32 @@ static void __ref intelli_plug_work_fn(struct work_struct *work)
 	if (atomic_read(&intelli_plug_active) == 1)
 		queue_delayed_work_on(0, intelliplug_wq, &intelli_plug_work,
 					msecs_to_jiffies(sampling_time));
+}
+
+static void __ref intelli_plug_boost_fn(struct work_struct *work)
+{
+	int cpu;	
+	u64 now;	
+
+	now = ktime_to_us(ktime_get());
+	last_input = now;
+
+	if (now - last_boost_time < MIN_INPUT_INTERVAL)
+		return;
+
+	if (eco_mode_active)
+		boosted_cpus = 2;
+	else
+		boosted_cpus = touch_boosted_cpus;
+
+	for_each_cpu_not(cpu, cpu_online_mask) {
+		if (boosted_cpus <= num_online_cpus())
+			break;
+		if (cpu == 0)
+			continue;
+		cpu_up(cpu);
+	}
+	last_boost_time = ktime_to_us(ktime_get());
 }
 
 static void __ref wakeup_boost(void)
@@ -387,6 +428,7 @@ static void intelli_plug_suspend(struct early_suspend *handler)
 
 	/* flush hotplug workqueue */
 	flush_workqueue(intelliplug_wq);
+	cancel_delayed_work_sync(&intelli_plug_boost);
 	cancel_delayed_work_sync(&intelli_plug_work);
 
 	mutex_lock(&intelli_plug_mutex);
@@ -441,6 +483,9 @@ static void __ref intelli_plug_resume(struct early_suspend *handler)
 		}
 	}
 
+	INIT_DELAYED_WORK(&intelli_plug_work, intelli_plug_work_fn);
+	INIT_DELAYED_WORK(&intelli_plug_boost, intelli_plug_boost_fn);
+
 	/* resume hotplug workqueue */
 	queue_delayed_work_on(0, intelliplug_wq, &intelli_plug_work,
 			      RESUME_SAMPLING_MS);
@@ -457,32 +502,14 @@ static struct early_suspend intelli_plug_early_suspend_struct_driver = {
 };
 #endif  /* CONFIG_POWERSUSPEND || CONFIG_HAS_EARLYSUSPEND */
 
-static void __ref intelli_plug_input_event(struct input_handle *handle,
+static void intelli_plug_input_event(struct input_handle *handle,
 		unsigned int type, unsigned int code, int value)
 {
-	int cpu, boosted_cpus;
-	u64 now;
-
 	if (strict_mode_active || touch_boosted_cpus == 1 || hotplug_suspended)
 		return;
 
-	now = ktime_to_us(ktime_get());
-	if (now - last_boost_time < MIN_INPUT_INTERVAL)
-		return;
-
-	if (eco_mode_active)
-		boosted_cpus = 2;
-	else
-		boosted_cpus = touch_boosted_cpus;
-
-	for_each_cpu_not(cpu, cpu_online_mask) {
-		if (boosted_cpus <= num_online_cpus())
-			break;
-		if (cpu == 0)
-			continue;
-		cpu_up(cpu);
-	}
-	last_boost_time = ktime_to_us(ktime_get());
+	queue_delayed_work_on(0, intelliplug_wq, &intelli_plug_boost,
+			      RESUME_SAMPLING_MS);
 }
 
 static int intelli_plug_input_connect(struct input_handler *handler,
@@ -572,6 +599,7 @@ static int __ref intelli_plug_start(void)
 	mutex_init(&intelli_plug_mutex);
 
 	INIT_DELAYED_WORK(&intelli_plug_work, intelli_plug_work_fn);
+	INIT_DELAYED_WORK(&intelli_plug_boost, intelli_plug_boost_fn);
 
 	queue_delayed_work_on(0, intelliplug_wq, &intelli_plug_work,
 			      START_DELAY_MS);
@@ -594,24 +622,32 @@ static void intelli_plug_stop(void)
 #endif  /* CONFIG_POWERSUSPEND || CONFIG_HAS_EARLYSUSPEND */
 
 	flush_workqueue(intelliplug_wq);
+	cancel_delayed_work_sync(&intelli_plug_boost);
 	cancel_delayed_work_sync(&intelli_plug_work);
 	mutex_destroy(&intelli_plug_mutex);
 	input_unregister_handler(&intelli_plug_input_handler);
 	destroy_workqueue(intelliplug_wq);
 }
 
-#define show_one(file_name, object)				\
-static ssize_t show_##file_name					\
-(struct kobject *kobj, struct attribute *attr, char *buf)	\
-{								\
-	return sprintf(buf, "%u\n", object);			\
+static void intelli_plug_active_eval_fn(unsigned int status)
+{
+	int ret = 0;
+
+	if (status == 1) {
+		ret = intelli_plug_start();
+		if (ret)
+			status = 0;
+	} else
+		intelli_plug_stop();
+
+	atomic_set(&intelli_plug_active, status);
 }
 
-static ssize_t show_intelli_plug_active(struct kobject *kobj,
-			struct attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d\n",
-			atomic_read(&intelli_plug_active));
+#define show_one(file_name, object)				\
+static ssize_t show_##file_name					\
+(struct kobject *kobj, struct kobj_attribute *attr, char *buf)	\
+{								\
+	return sprintf(buf, "%u\n", object);			\
 }
 
 show_one(eco_mode_active, eco_mode_active);
@@ -632,8 +668,9 @@ show_one(screen_off_max, screen_off_max);
 
 #define store_one(file_name, object)		\
 static ssize_t store_##file_name		\
-(struct kobject *kobj, struct attribute *attr,	\
-	const char *buf, size_t count)		\
+(struct kobject *kobj, 				\
+ struct kobj_attribute *attr, 			\
+ const char *buf, size_t count)			\
 {						\
 	unsigned int input;			\
 	int ret;				\
@@ -663,23 +700,17 @@ store_one(nr_fshift, nr_fshift);
 store_one(nr_run_hysteresis, nr_run_hysteresis);
 store_one(screen_off_max, screen_off_max);
 
-static void intelli_plug_active_eval_fn(unsigned int status)
+static ssize_t show_intelli_plug_active(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					char *buf)
 {
-	int ret = 0;
-
-	if (status == 1) {
-		ret = intelli_plug_start();
-		if (ret)
-			status = 0;
-	} else
-		intelli_plug_stop();
-
-	atomic_set(&intelli_plug_active, status);
+	return sprintf(buf, "%d\n",
+			atomic_read(&intelli_plug_active));
 }
 
 static ssize_t store_intelli_plug_active(struct kobject *kobj,
-				struct attribute *attr,
-				const char *buf, size_t count)
+					 struct kobj_attribute *attr,
+					 const char *buf, size_t count)
 {
 	int ret;
 	unsigned int input;
@@ -698,69 +729,50 @@ static ssize_t store_intelli_plug_active(struct kobject *kobj,
 	return count;
 }
 
-static struct kobj_attribute intelli_plug_active_attr =
-	__ATTR(intelli_plug_active, 0664, show_intelli_plug_active,
-			store_intelli_plug_active);
+static ssize_t show_boost_lock_duration(struct kobject *kobj,
+					struct kobj_attribute *attr, 
+					char *buf)
+{
+	return sprintf(buf, "%llu\n", div_u64(boost_lock_duration, 1000));
+}
 
-static struct kobj_attribute eco_mode_active_attr =
-	__ATTR(eco_mode_active, 0664, show_eco_mode_active,
-			store_eco_mode_active);
+static ssize_t store_boost_lock_duration(struct kobject *kobj,
+					 struct kobj_attribute *attr,
+					 const char *buf, size_t count)
+{
+	int ret;
+	u64 val;
 
-static struct kobj_attribute strict_mode_active_attr =
-	__ATTR(strict_mode_active, 0664, show_strict_mode_active,
-			store_strict_mode_active);
+	ret = sscanf(buf, "%llu", &val);
+	if (ret != 1)
+		return -EINVAL;
 
-static struct kobj_attribute wake_boost_active_attr =
-	__ATTR(wake_boost_active, 0664, show_wake_boost_active,
-			store_wake_boost_active);
+	boost_lock_duration = val * 1000;
 
-static struct kobj_attribute touch_boosted_cpus_attr =
-	__ATTR(touch_boosted_cpus, 0664, show_touch_boosted_cpus,
-			store_touch_boosted_cpus);
+	return count;
+}
 
-static struct kobj_attribute def_sampling_ms_attr =
-	__ATTR(def_sampling_ms, 0664, show_def_sampling_ms,
-			store_def_sampling_ms);
+#define KERNEL_ATTR_RW(_name) \
+static struct kobj_attribute _name##_attr = \
+	__ATTR(_name, 0644, show_##_name, store_##_name)
 
-static struct kobj_attribute busy_sampling_ms_attr =
-	__ATTR(busy_sampling_ms, 0664, show_busy_sampling_ms,
-			store_busy_sampling_ms);
-
-static struct kobj_attribute dual_core_persistence_attr =
-	__ATTR(dual_core_persistence, 0664, show_dual_core_persistence,
-			store_dual_core_persistence);
-
-static struct kobj_attribute tri_core_persistence_attr =
-	__ATTR(tri_core_persistence, 0664, show_tri_core_persistence,
-			store_tri_core_persistence);
-
-static struct kobj_attribute quad_core_persistence_attr =
-	__ATTR(quad_core_persistence, 0664, show_quad_core_persistence,
-			store_quad_core_persistence);
-
-static struct kobj_attribute busy_persistence_attr =
-	__ATTR(busy_persistence, 0664, show_busy_persistence,
-			store_busy_persistence);
-
-static struct kobj_attribute cpu_down_factor_attr =
-	__ATTR(cpu_down_factor, 0664, show_cpu_down_factor,
-			store_cpu_down_factor);
-
-static struct kobj_attribute debug_intelli_plug_attr =
-	__ATTR(debug_intelli_plug, 0664, show_debug_intelli_plug,
-			store_debug_intelli_plug);
-
-static struct kobj_attribute nr_fshift_attr =
-	__ATTR(nr_fshift, 0664, show_nr_fshift,
-			store_nr_fshift);
-
-static struct kobj_attribute nr_run_hysteresis_attr =
-	__ATTR(nr_run_hysteresis, 0664, show_nr_run_hysteresis,
-			store_nr_run_hysteresis);
-
-static struct kobj_attribute screen_off_max_attr =
-	__ATTR(screen_off_max, 0664, show_screen_off_max,
-			store_screen_off_max);
+KERNEL_ATTR_RW(intelli_plug_active);
+KERNEL_ATTR_RW(eco_mode_active);
+KERNEL_ATTR_RW(strict_mode_active);
+KERNEL_ATTR_RW(wake_boost_active);
+KERNEL_ATTR_RW(touch_boosted_cpus);
+KERNEL_ATTR_RW(boost_lock_duration);
+KERNEL_ATTR_RW(def_sampling_ms);
+KERNEL_ATTR_RW(busy_sampling_ms);
+KERNEL_ATTR_RW(dual_core_persistence);
+KERNEL_ATTR_RW(tri_core_persistence);
+KERNEL_ATTR_RW(quad_core_persistence);
+KERNEL_ATTR_RW(busy_persistence);
+KERNEL_ATTR_RW(cpu_down_factor);
+KERNEL_ATTR_RW(debug_intelli_plug);
+KERNEL_ATTR_RW(nr_fshift);
+KERNEL_ATTR_RW(nr_run_hysteresis);
+KERNEL_ATTR_RW(screen_off_max);
 
 static struct attribute *intelli_plug_attrs[] = {
 	&intelli_plug_active_attr.attr,
@@ -768,6 +780,7 @@ static struct attribute *intelli_plug_attrs[] = {
 	&strict_mode_active_attr.attr,
 	&wake_boost_active_attr.attr,
 	&touch_boosted_cpus_attr.attr,
+	&boost_lock_duration_attr.attr,
 	&def_sampling_ms_attr.attr,
 	&busy_sampling_ms_attr.attr,
 	&dual_core_persistence_attr.attr,
