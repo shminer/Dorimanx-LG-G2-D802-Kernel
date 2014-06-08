@@ -36,8 +36,8 @@
 
 #define MSM_HOTPLUG		"msm_hotplug"
 #define HOTPLUG_ENABLED		0
-#define DEFAULT_UPDATE_RATE	100 / 10
-#define START_DELAY		100 * 20
+#define DEFAULT_UPDATE_RATE	HZ / 10
+#define START_DELAY		HZ * 20
 #define MIN_INPUT_INTERVAL	150 * 1000L
 #define DEFAULT_HISTORY_SIZE	10
 #define DEFAULT_DOWN_LOCK_DUR	1000
@@ -45,7 +45,8 @@
 #define DEFAULT_NR_CPUS_BOOSTED	1
 #define DEFAULT_MIN_CPUS_ONLINE	1
 #define DEFAULT_MAX_CPUS_ONLINE	NR_CPUS
-#define DEFAULT_FAST_LANE_LOAD	120
+#define DEFAULT_FAST_LANE_LOAD	99
+#define DEFAULT_FAST_LANE_MIN_FREQ 1728000
 #define DEFAULT_SUSPEND_DEFER_TIME	5
 
 static unsigned int debug = 0;
@@ -73,6 +74,7 @@ static struct cpu_hotplug {
 	unsigned int cpus_boosted;
 	unsigned int offline_load;
 	unsigned int down_lock_dur;
+	unsigned int fast_lane_min_freq;
 	u64 boost_lock_dur;
 	u64 last_input;
 	unsigned int fast_lane_load;
@@ -101,7 +103,8 @@ static struct cpu_hotplug {
 	.cpus_boosted = DEFAULT_NR_CPUS_BOOSTED,
 	.down_lock_dur = DEFAULT_DOWN_LOCK_DUR,
 	.boost_lock_dur = DEFAULT_BOOST_LOCK_DUR,
-	.fast_lane_load = DEFAULT_FAST_LANE_LOAD
+	.fast_lane_load = DEFAULT_FAST_LANE_LOAD,
+	.fast_lane_min_freq = DEFAULT_FAST_LANE_MIN_FREQ
 };
 
 static struct workqueue_struct *hotplug_wq;
@@ -173,8 +176,7 @@ static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
 	return jiffies_to_usecs(idle_time);
 }
 
-static inline cputime64_t get_cpu_idle_time(unsigned int cpu,
-					    cputime64_t *wall)
+static inline u64 get_cpu_idle_time(unsigned int cpu, u64 *wall)
 {
 	u64 idle_time = get_cpu_idle_time_us(cpu, NULL);
 
@@ -192,7 +194,7 @@ static int update_average_load(unsigned int cpu)
 	int ret;
 	unsigned int idle_time, wall_time;
 	unsigned int cur_load, load_max_freq;
-	cputime64_t cur_wall_time, cur_idle_time;
+	u64 cur_wall_time, cur_idle_time;
 	struct cpu_load_data *pcpu = &per_cpu(cpuload, cpu);
 	struct cpufreq_policy policy;
 
@@ -332,7 +334,7 @@ static int get_lowest_load_cpu(void)
 {
 	int cpu, lowest_cpu = 0;
 	unsigned int lowest_load = UINT_MAX;
-	unsigned int cpu_load[NR_CPUS];
+	unsigned int cpu_load[stats.total_cpus];
 	unsigned int proj_load;
 	struct cpu_load_data *pcpu;
 
@@ -457,32 +459,39 @@ static unsigned int load_to_update_rate(unsigned int load)
 	return ret;
 }
 
-static int reschedule_hotplug_work(void)
+static void reschedule_hotplug_work(void)
 {
-	return queue_delayed_work_on(0, hotplug_wq, &hotplug_work,
-				     msecs_to_jiffies(load_to_update_rate(
-						      stats.cur_avg_load)));
+	unsigned int delay;
+
+	delay = load_to_update_rate(stats.cur_avg_load);
+	queue_delayed_work_on(0, hotplug_wq, &hotplug_work,
+			      msecs_to_jiffies(delay));
 }
 
 static void msm_hotplug_work(struct work_struct *work)
 {
 	unsigned int i, target = 0;
 
+#if defined(CONFIG_LCD_NOTIFY) || \
+	defined(CONFIG_POWERSUSPEND) || \
+	defined(CONFIG_HAS_EARLYSUSPEND)
 	if (hotplug.suspended) {
 		dprintk("%s: suspended.\n", MSM_HOTPLUG);
 		return;
 	}
+#endif
 
 	update_load_stats();
 
-	if (stats.cur_max_load >= hotplug.fast_lane_load) {
+	if ((stats.cur_max_load >= hotplug.fast_lane_load) &&
+			(cpufreq_quick_get(0) >= hotplug.fast_lane_min_freq)) {
 		/* Enter the fast lane */
 		online_cpu(hotplug.max_cpus_online);
 		goto reschedule;
 	}
 
 	/* If number of cpus locked, break out early */
-	if (hotplug.min_cpus_online == num_possible_cpus()) {
+	if (hotplug.min_cpus_online == stats.total_cpus) {
 		if (stats.online_cpus != hotplug.min_cpus_online)
 			online_cpu(hotplug.min_cpus_online);
 		goto reschedule;
@@ -722,9 +731,9 @@ static int hotplug_input_connect(struct input_handler *handler,
 		goto err_open;
 
 	return 0;
-err_open:
-	input_unregister_handle(handle);
 err_register:
+	input_unregister_handle(handle);
+err_open:
 	kfree(handle);
 	return err;
 }
@@ -1146,7 +1155,7 @@ static ssize_t store_min_cpus_online(struct device *dev,
 	unsigned int val;
 
 	ret = sscanf(buf, "%u", &val);
-	if (ret != 1 || val < 1 || val > DEFAULT_MAX_CPUS_ONLINE)
+	if (ret != 1 || val < 1 || val > stats.total_cpus)
 		return -EINVAL;
 
 	if (hotplug.max_cpus_online < val)
@@ -1172,7 +1181,7 @@ static ssize_t store_max_cpus_online(struct device *dev,
 	unsigned int val;
 
 	ret = sscanf(buf, "%u", &val);
-	if (ret != 1 || val < 1 || val > DEFAULT_MAX_CPUS_ONLINE)
+	if (ret != 1 || val < 1 || val > stats.total_cpus)
 		return -EINVAL;
 
 	if (hotplug.min_cpus_online > val)
@@ -1233,7 +1242,7 @@ static ssize_t store_suspend_max_cpus(struct device *dev,
 	unsigned int val;
 
 	ret = sscanf(buf, "%u", &val);
-	if (ret != 1 || val < 0 || val > DEFAULT_MAX_CPUS_ONLINE)
+	if (ret != 1 || val < 0 || val > stats.total_cpus)
 		return -EINVAL;
 
 	hotplug.suspend_max_cpus = val;
@@ -1280,7 +1289,7 @@ static ssize_t store_cpus_boosted(struct device *dev,
 	unsigned int val;
 
 	ret = sscanf(buf, "%u", &val);
-	if (ret != 1 || val < 1 || val > DEFAULT_MAX_CPUS_ONLINE)
+	if (ret != 1 || val < 1 || val > stats.total_cpus)
 		return -EINVAL;
 
 	hotplug.cpus_boosted = val;
