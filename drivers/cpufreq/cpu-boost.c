@@ -47,7 +47,7 @@ static struct workqueue_struct *cpu_boost_wq;
 static struct work_struct input_boost_work;
 static struct work_struct plug_boost_work;
 
-static unsigned int boost_ms = 40;
+static unsigned int boost_ms = 30;
 module_param(boost_ms, uint, 0644);
 
 static unsigned int sync_threshold;
@@ -56,23 +56,26 @@ module_param(sync_threshold, uint, 0644);
 static unsigned int input_boost_freq = 1574400;
 module_param(input_boost_freq, uint, 0644);
 
-static unsigned int input_boost_ms = 40;
+static unsigned int input_boost_ms = 30;
 module_param(input_boost_ms, uint, 0644);
 
-static unsigned int migration_load_threshold = 15;
+static unsigned int migration_load_threshold = 30;
 module_param(migration_load_threshold, uint, 0644);
 
-static bool load_based_syncs;
+static bool load_based_syncs = 1;
 module_param(load_based_syncs, bool, 0644);
 
-static unsigned int plug_boost_freq;
+static bool hotplug_boost = 1;
+module_param(hotplug_boost, bool, 0644);
+
+static unsigned int plug_boost_freq = 1574400;
 module_param(plug_boost_freq, uint, 0644);
 
-static unsigned int plug_boost_ms = 40;
+static unsigned int plug_boost_ms = 30;
 module_param(plug_boost_ms, uint, 0644);
 
-#define MIN_INPUT_INTERVAL (150 * USEC_PER_MSEC)
 static u64 last_input_time;
+#define MIN_INPUT_INTERVAL (150 * USEC_PER_MSEC)
 
 /*
  * The CPUFREQ_ADJUST notifier is used to override the current policy min to
@@ -118,7 +121,7 @@ static void do_boost_rem(struct work_struct *work)
 	struct cpu_sync *s = container_of(work, struct cpu_sync,
 						boost_rem.work);
 
-	pr_debug("Removing boost for CPU%d\n", s->cpu);
+	pr_debug("Removing input/hotplug boost for CPU%d\n", s->cpu);
 	s->boost_min = 0;
 	/* Force policy re-evaluation to trigger adjust notifier. */
 	cpufreq_update_policy(s->cpu);
@@ -207,7 +210,7 @@ static void run_boost_migration(unsigned int cpu)
 		cpufreq_update_policy(src_cpu);
 	if (cpu_online(dest_cpu)) {
 		cpufreq_update_policy(dest_cpu);
-		queue_delayed_work_on(0, cpu_boost_wq,
+		queue_delayed_work_on(dest_cpu, cpu_boost_wq,
 			&s->boost_rem, msecs_to_jiffies(boost_ms));
 	} else {
 		s->boost_min = 0;
@@ -305,7 +308,7 @@ static void do_input_boost(struct work_struct *work)
 		cancel_delayed_work_sync(&i_sync_info->input_boost_rem);
 		i_sync_info->input_boost_min = input_boost_freq;
 		cpufreq_update_policy(i);
-		queue_delayed_work_on(0, cpu_boost_wq,
+		queue_delayed_work_on(i_sync_info->cpu, cpu_boost_wq,
 			&i_sync_info->input_boost_rem,
 			msecs_to_jiffies(input_boost_ms));
 	}
@@ -330,6 +333,7 @@ static void cpuboost_input_event(struct input_handle *handle,
 	if (now - last_input_time < MIN_INPUT_INTERVAL)
 		return;
 
+	pr_debug("Input boost for input event");
 	queue_work(cpu_boost_wq, &input_boost_work);
 
 	last_input_time = ktime_to_us(ktime_get());
@@ -424,7 +428,7 @@ static void do_plug_boost(struct work_struct *work)
 		cancel_delayed_work_sync(&i_sync_info->plug_boost_rem);
 		i_sync_info->plug_boost_min = plug_boost_freq;
 		cpufreq_update_policy(i);
-		queue_delayed_work_on(0, cpu_boost_wq,
+		queue_delayed_work_on(i_sync_info->cpu, cpu_boost_wq,
 			&i_sync_info->plug_boost_rem,
 			msecs_to_jiffies(plug_boost_ms));
 	}
@@ -437,7 +441,7 @@ static int cpuboost_cpu_callback(struct notifier_block *cpu_nb,
 	int ret;
 	struct cpufreq_policy policy;
 
-	if (!plug_boost_freq)
+	if (!hotplug_boost || !input_boost_freq)
 		return NOTIFY_OK;
 
 	ret = cpufreq_get_policy(&policy, 0);
@@ -450,8 +454,15 @@ static int cpuboost_cpu_callback(struct notifier_block *cpu_nb,
 	case CPU_UP_CANCELED:
 		break;
 	case CPU_ONLINE:
-		if (!work_pending(&plug_boost_work))
-			queue_work(cpu_boost_wq, &plug_boost_work);
+		if (work_pending(&input_boost_work))
+			break;
+		pr_debug("Input boost for CPU%d\n", (int)hcpu);
+		queue_work(cpu_boost_wq, &input_boost_work);
+		last_input_time = ktime_to_us(ktime_get());
+		if (work_pending(&plug_boost_work))
+			break;
+		pr_debug("Hotplug boost for CPU%d\n", (int)hcpu);
+		queue_work(cpu_boost_wq, &plug_boost_work);
 		break;
 	default:
 		break;
