@@ -851,6 +851,9 @@ static void __ref do_freq_control(long temp)
 	int cpu = 0;
 	uint32_t max_freq = thermal_limited_max_freq;
 
+	if (msm_thermal_info_local.limit_temp_degC > 80)
+		msm_thermal_info_local.limit_temp_degC = 80;
+
 	if (debug_mode == 1)
 		printk(KERN_ERR "pre-check do_freq_control temp[%u], \
 				limit_idx[%u], limit_idx_low[%u], \
