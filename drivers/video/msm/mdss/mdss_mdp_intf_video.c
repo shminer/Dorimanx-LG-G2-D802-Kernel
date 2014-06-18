@@ -551,50 +551,6 @@ static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl, int new_fps)
 			ctl->force_screen_state = MDSS_SCREEN_DEFAULT;
 			mdss_mdp_display_commit(ctl, NULL);
 			mdss_mdp_display_wait4comp(ctl);
-		} else if (pdata->panel_info.dfps_update
-				== DFPS_IMMEDIATE_PORCH_UPDATE_MODE){
-			if (!ctx->timegen_en) {
-				pr_err("TG is OFF. DFPS mode invalid\n");
-				return -EINVAL;
-			}
-
-			video_vsync_irq_enable(ctl, true);
-			INIT_COMPLETION(ctx->vsync_comp);
-			rc = wait_for_completion_timeout(&ctx->vsync_comp,
-				usecs_to_jiffies(VSYNC_TIMEOUT_US));
-			WARN(rc <= 0, "timeout (%d) vsync interrupt on ctl=%d\n",
-				rc, ctl->num);
-
-			video_vsync_irq_disable(ctl);
-			/* Do not configure fps on vsync timeout */
-			if (rc <= 0)
-				return rc;
-
-			if (mdss_mdp_video_line_count(ctl) >=
-					pdata->panel_info.yres/2) {
-				pr_err("Too few lines left line_cnt = %d y_res/2 = %d\n",
-					mdss_mdp_video_line_count(ctl),
-					pdata->panel_info.yres/2);
-				return -EPERM;
-			}
-			rc = mdss_mdp_video_vfp_fps_update(ctl, new_fps);
-			if (rc < 0) {
-				pr_err("%s: Error during DFPS\n", __func__);
-				return rc;
-			}
-			if (sctl) {
-				rc = mdss_mdp_video_vfp_fps_update(sctl,
-								new_fps);
-				if (rc < 0) {
-					pr_err("%s: DFPS error\n", __func__);
-					return rc;
-				}
-			}
-			rc = mdss_mdp_ctl_intf_event(ctl,
-						MDSS_EVENT_PANEL_UPDATE_FPS,
-						(void *)new_fps);
-			WARN(rc, "intf %d panel fps update error (%d)\n",
-							ctl->intf_num, rc);
 		} else {
 			pr_err("intf %d panel, unknown FPS mode\n",
 							ctl->intf_num);
