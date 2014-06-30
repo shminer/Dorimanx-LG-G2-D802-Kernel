@@ -15,7 +15,6 @@
 #include <linux/sched.h>
 #include <linux/mutex.h>
 #include <linux/module.h>
-#include <linux/rq_stats.h>
 #include <linux/slab.h>
 #include <linux/input.h>
 #include <linux/kobject.h>
@@ -29,10 +28,10 @@
 #include <linux/cpufreq.h>
 
 #define INTELLI_PLUG			"intelli_plug"
-#define INTELLI_PLUG_MAJOR_VERSION	4
-#define INTELLI_PLUG_MINOR_VERSION	3
+#define INTELLI_PLUG_MAJOR_VERSION	5
+#define INTELLI_PLUG_MINOR_VERSION	0
 
-#define DEF_SAMPLING_MS			HZ / 2
+#define DEF_SAMPLING_MS			268
 #define RESUME_SAMPLING_MS		HZ / 10
 #define START_DELAY_MS			HZ * 20
 #define MIN_INPUT_INTERVAL		150 * 1000L
@@ -48,6 +47,20 @@
 #define DEFAULT_SUSPEND_DEFER_TIME	10
 #define DEFAULT_MAX_CPUS_ONLINE_SUSP	NR_CPUS / 2
 #endif
+
+#define CAPACITY_RESERVE		50
+#if defined(CONFIG_ARCH_MSM8960) || defined(CONFIG_ARCH_APQ8064) || \
+defined(CONFIG_ARCH_MSM8974)
+#define THREAD_CAPACITY			(339 - CAPACITY_RESERVE)
+#elif defined(CONFIG_ARCH_MSM8226) || defined (CONFIG_ARCH_MSM8926) || \
+defined (CONFIG_ARCH_MSM8610) || defined (CONFIG_ARCH_MSM8228)
+#define THREAD_CAPACITY			(190 - CAPACITY_RESERVE)
+#else
+#define THREAD_CAPACITY			(250 - CAPACITY_RESERVE)
+#endif
+#define CPU_NR_THRESHOLD		((THREAD_CAPACITY << 1) + (THREAD_CAPACITY / 2))
+#define MULT_FACTOR			4
+#define DIV_FACTOR			100000
 
 static u64 last_boost_time, last_input;
 
@@ -65,17 +78,25 @@ static struct notifier_block notif;
 #endif
 #endif
 
+struct ip_cpu_info {
+	unsigned int curr_max;
+	unsigned long cpu_nr_running;
+};
+static DEFINE_PER_CPU(struct ip_cpu_info, ip_info);
+
 /* HotPlug Driver controls */
 static atomic_t intelli_plug_active = ATOMIC_INIT(0);
 static unsigned int cpus_boosted = DEFAULT_NR_CPUS_BOOSTED;
 static unsigned int min_cpus_online = DEFAULT_MIN_CPUS_ONLINE;
 static unsigned int max_cpus_online = DEFAULT_MAX_CPUS_ONLINE;
+static unsigned int full_mode_profile = 0;
+static unsigned int cpu_nr_run_threshold = CPU_NR_THRESHOLD;
 
 #if defined(CONFIG_LCD_NOTIFY) || \
 	defined(CONFIG_POWERSUSPEND) || \
 	defined(CONFIG_HAS_EARLYSUSPEND)
 static bool hotplug_suspended = false;
-unsigned int suspend_defer_time;
+unsigned int suspend_defer_time = DEFAULT_SUSPEND_DEFER_TIME;
 static unsigned int min_cpus_online_res = DEFAULT_MIN_CPUS_ONLINE;
 static unsigned int max_cpus_online_res = DEFAULT_MAX_CPUS_ONLINE;
 static unsigned int max_cpus_online_susp = DEFAULT_MAX_CPUS_ONLINE_SUSP;
@@ -86,35 +107,66 @@ static unsigned int target_cpus = 0;
 static u64 boost_lock_duration = BOOST_LOCK_DUR;
 static unsigned int def_sampling_ms = DEF_SAMPLING_MS;
 static unsigned int nr_fshift = DEFAULT_NR_FSHIFT;
-static unsigned int nr_run_hysteresis = 4;  /* 0.5 thread */
+static unsigned int nr_run_hysteresis = DEFAULT_MAX_CPUS_ONLINE * 2;
 static unsigned int debug_intelli_plug = 0;
 
-static unsigned int nr_run_thresholds_full[] = {
-/*	1,  2,  3,  4 - on-line cpus target */
-	5,  7,  9,  UINT_MAX /* avg run threads * 2 (e.g., 9 = 2.25 threads) */
-	};
+#define dprintk(msg...)		\
+do { 				\
+	if (debug_intelli_plug)		\
+		pr_info(msg);	\
+} while (0)
 
-static unsigned int nr_run_thresholds_turbo[] = {
-/*      1,  2,  3 - on-line cpus target */
-        4,  6,  UINT_MAX /* avg run threads * 2 (e.g., 9 = 2.25 threads) */
-        };
+static unsigned int nr_run_thresholds_balance[] = {
+	(THREAD_CAPACITY * 625 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 875 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 1125 * MULT_FACTOR) / DIV_FACTOR,
+	UINT_MAX
+};
+
+static unsigned int nr_run_thresholds_performance[] = {
+	(THREAD_CAPACITY * 380 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 625 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 875 * MULT_FACTOR) / DIV_FACTOR,
+	UINT_MAX
+};
+
+static unsigned int nr_run_thresholds_conservative[] = {
+	(THREAD_CAPACITY * 875 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 1625 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 2125 * MULT_FACTOR) / DIV_FACTOR,
+	UINT_MAX
+};
+
+static unsigned int nr_run_thresholds_disable[] = {
+	0,  0,  0,  UINT_MAX
+};
+
+static unsigned int nr_run_thresholds_tri[] = {
+	(THREAD_CAPACITY * 625 * MULT_FACTOR) / DIV_FACTOR,
+	(THREAD_CAPACITY * 875 * MULT_FACTOR) / DIV_FACTOR,
+	UINT_MAX
+};
 
 static unsigned int nr_run_thresholds_eco[] = {
-/*      1,  2 - on-line cpus target */
-        3,  UINT_MAX /* avg run threads * 2 (e.g., 9 = 2.25 threads) */
-        };
+        (THREAD_CAPACITY * 380 * MULT_FACTOR) / DIV_FACTOR,
+	UINT_MAX
+};
 
 static unsigned int nr_run_thresholds_strict[] = {
-/*	   1 - on-line cpus target */
-	UINT_MAX /* avg run threads *2 (e.g., 9 = 2.25 threads) */
+	UINT_MAX
+};
+
+static unsigned int *nr_run_profiles[] = {
+	nr_run_thresholds_balance,
+	nr_run_thresholds_performance,
+	nr_run_thresholds_conservative,
+	nr_run_thresholds_disable,
+	nr_run_thresholds_tri,
+	nr_run_thresholds_eco,
+	nr_run_thresholds_strict
 	};
 
 static unsigned int nr_run_last;
-
-static unsigned int NwNs_Threshold[] = { 19, 30,  19,  11,  19,  11, 0,  11};
-static unsigned int TwTs_Threshold[] = {140,  0, 140, 190, 140, 190, 0, 190};
-
-extern unsigned long avg_nr_running(void);
 static unsigned int down_lock_dur = DEFAULT_DOWN_LOCK_DUR;
 
 struct down_lock {
@@ -122,6 +174,9 @@ struct down_lock {
 	struct delayed_work lock_rem;
 };
 static DEFINE_PER_CPU(struct down_lock, lock_info);
+
+extern unsigned long avg_nr_running(void);
+extern unsigned long avg_cpu_nr_running(unsigned int cpu);
 
 static void apply_down_lock(unsigned int cpu)
 {
@@ -145,53 +200,12 @@ static int check_down_lock(unsigned int cpu)
 	return dl->locked;
 }
 
-static int mp_decision(void)
-{
-	int nr_cpu_online;
-	static bool first_call = true;
-	int new_state = 0;
-	int index;
-	unsigned int rq_depth;
-	static cputime64_t total_time = 0;
-	static cputime64_t last_time;
-	cputime64_t current_time;
-	cputime64_t this_time = 0;
-
-	current_time = ktime_to_ms(ktime_get());
-	if (first_call) {
-		first_call = false;
-	} else {
-		this_time = current_time - last_time;
-	}
-	total_time += this_time;
-
-	rq_depth = rq_info.rq_avg;
-
-	nr_cpu_online = num_online_cpus();
-	index = (nr_cpu_online - 1) * 2;
-	if ((nr_cpu_online < NR_CPUS) &&
-			(rq_depth >= NwNs_Threshold[index])) {
-		if (total_time >= TwTs_Threshold[index]) {
-			new_state = 1;
-		}
-	} else if (rq_depth <= NwNs_Threshold[index+1]) {
-		if (total_time >= TwTs_Threshold[index+1] ) {
-			new_state = 0;
-		}
-	} else {
-			total_time = 0;
-	}
-
-	last_time = ktime_to_ms(ktime_get());
-
-	return new_state;
-}
-
 static unsigned int calculate_thread_stats(void)
 {
 	unsigned int avg_nr_run = avg_nr_running();
 	unsigned int nr_run;
 	unsigned int threshold_size;
+	unsigned int *current_profile;
 
 	threshold_size = max_cpus_online;
 	nr_run_hysteresis = max_cpus_online * 2;
@@ -200,13 +214,16 @@ static unsigned int calculate_thread_stats(void)
 	for (nr_run = 1; nr_run < threshold_size; nr_run++) {
 		unsigned int nr_threshold;
 		if (max_cpus_online >= 4)
-			nr_threshold = nr_run_thresholds_full[nr_run - 1];
+			current_profile = nr_run_profiles[full_mode_profile];
 		else if (max_cpus_online == 3)
-			nr_threshold = nr_run_thresholds_turbo[nr_run - 1];
+			current_profile = nr_run_profiles[4];
 		else if (max_cpus_online == 2)
-			nr_threshold = nr_run_thresholds_eco[nr_run - 1];
+			current_profile = nr_run_profiles[5];
 		else
-			nr_threshold = nr_run_thresholds_strict[0];
+			current_profile = nr_run_profiles[6];
+
+		nr_threshold = current_profile[nr_run - 1];
+
 		if (nr_run_last <= nr_run)
 			nr_threshold += nr_run_hysteresis;
 		if (avg_nr_run <= (nr_threshold << (FSHIFT - nr_fshift)))
@@ -217,10 +234,22 @@ static unsigned int calculate_thread_stats(void)
 	return nr_run;
 }
 
+static void update_per_cpu_stat(void)
+{
+	unsigned int cpu;
+	struct ip_cpu_info *l_ip_info;
+
+	for_each_online_cpu(cpu) {
+		l_ip_info = &per_cpu(ip_info, cpu);
+		l_ip_info->cpu_nr_running = avg_cpu_nr_running(cpu);
+	}
+}
+
 static void __ref cpu_up_down_work(struct work_struct *work)
 {
-	int online_cpus, cpu;
+	int online_cpus, cpu, l_nr_threshold;
 	int target = target_cpus;
+	struct ip_cpu_info *l_ip_info;
 
 	if (target < min_cpus_online)
 		target = min_cpus_online;
@@ -235,10 +264,15 @@ static void __ref cpu_up_down_work(struct work_struct *work)
 				boost_lock_duration))
 			return;
 
+		update_per_cpu_stat();
 		for_each_online_cpu(cpu) {
+			l_nr_threshold =
+				cpu_nr_run_threshold << 1 / (num_online_cpus());
 			if (cpu == 0)
 				continue;
-			if (!check_down_lock(cpu))
+			l_ip_info = &per_cpu(ip_info, cpu);
+			if (!check_down_lock(cpu) &&
+			    l_ip_info->cpu_nr_running < l_nr_threshold)
 				cpu_down(cpu);
 			if (target >= num_online_cpus())
 				break;
@@ -257,28 +291,16 @@ static void __ref cpu_up_down_work(struct work_struct *work)
 
 static void intelli_plug_work_fn(struct work_struct *work)
 {
-	unsigned int cpu_count;
-
 #if defined(CONFIG_LCD_NOTIFY) || \
 	defined(CONFIG_POWERSUSPEND) || \
 	defined(CONFIG_HAS_EARLYSUSPEND)
 	if (hotplug_suspended && max_cpus_online_susp <= 1) {
-		if (debug_intelli_plug)
-			pr_info("intelli_plug is suspended!\n");
+		dprintk("intelli_plug is suspended!\n");
 		return;
 	}
 #endif
 
-	cpu_count = calculate_thread_stats();
-
-	/*
-	 * Detect artificial loads or constant loads
-	 * using msm rqstats
-	 */
-	if (mp_decision() && cpu_count < NR_CPUS)
-		cpu_count++;
-
-	target_cpus = cpu_count;
+	target_cpus = calculate_thread_stats();
 	queue_work_on(0, intelliplug_wq, &up_down_work);
 
 	if (atomic_read(&intelli_plug_active) == 1)
@@ -305,7 +327,8 @@ static void intelli_plug_suspend(struct work_struct *work)
 	mutex_unlock(&intelli_plug_mutex);
 
 	/* Do not cancel hotplug work unless max_cpus_online_susp is 1 */
-	if (max_cpus_online_susp > 1)
+	if (max_cpus_online_susp > 1 &&
+		full_mode_profile != 3)
 		return;
 
 	/* Flush hotplug workqueue */
@@ -334,7 +357,8 @@ static void __ref intelli_plug_resume(struct work_struct *work)
 		max_cpus_online = max_cpus_online_res;
 		mutex_unlock(&intelli_plug_mutex);
 		/* Initiate hotplug work if it was cancelled */
-		if (max_cpus_online_susp <= 1) {
+		if (max_cpus_online_susp <= 1 ||
+			full_mode_profile == 3) {
 			required_reschedule = 1;
 			INIT_DELAYED_WORK(&intelli_plug_work,
 					intelli_plug_work_fn);
@@ -466,8 +490,7 @@ static int intelli_plug_input_connect(struct input_handler *handler,
 	if (err)
 		goto err_open;
 
-	if (debug_intelli_plug)
-		pr_info("%s found and connected!\n", dev->name);
+	dprintk("%s found and connected!\n", dev->name);
 
 	return 0;
 err_open:
@@ -650,6 +673,8 @@ show_one(max_cpus_online, max_cpus_online);
 show_one(max_cpus_online_susp, max_cpus_online_susp);
 show_one(suspend_defer_time, suspend_defer_time);
 #endif
+show_one(full_mode_profile, full_mode_profile);
+show_one(cpu_nr_run_threshold, cpu_nr_run_threshold);
 show_one(def_sampling_ms, def_sampling_ms);
 show_one(debug_intelli_plug, debug_intelli_plug);
 show_one(nr_fshift, nr_fshift);
@@ -680,6 +705,8 @@ store_one(cpus_boosted, cpus_boosted);
 	defined(CONFIG_HAS_EARLYSUSPEND)
 store_one(suspend_defer_time, suspend_defer_time);
 #endif
+store_one(full_mode_profile, full_mode_profile);
+store_one(cpu_nr_run_threshold, cpu_nr_run_threshold);
 store_one(def_sampling_ms, def_sampling_ms);
 store_one(debug_intelli_plug, debug_intelli_plug);
 store_one(nr_fshift, nr_fshift);
@@ -813,6 +840,8 @@ KERNEL_ATTR_RW(max_cpus_online);
 KERNEL_ATTR_RW(max_cpus_online_susp);
 KERNEL_ATTR_RW(suspend_defer_time);
 #endif
+KERNEL_ATTR_RW(full_mode_profile);
+KERNEL_ATTR_RW(cpu_nr_run_threshold);
 KERNEL_ATTR_RW(boost_lock_duration);
 KERNEL_ATTR_RW(def_sampling_ms);
 KERNEL_ATTR_RW(debug_intelli_plug);
@@ -831,6 +860,8 @@ static struct attribute *intelli_plug_attrs[] = {
 	&max_cpus_online_susp_attr.attr,
 	&suspend_defer_time_attr.attr,
 #endif
+	&full_mode_profile_attr.attr,
+	&cpu_nr_run_threshold_attr.attr,
 	&boost_lock_duration_attr.attr,
 	&def_sampling_ms_attr.attr,
 	&debug_intelli_plug_attr.attr,
