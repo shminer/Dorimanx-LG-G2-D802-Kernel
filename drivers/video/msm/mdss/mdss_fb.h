@@ -238,7 +238,7 @@ static inline void mdss_fb_update_notify_update(struct msm_fb_data_type *mfd)
 int mdss_fb_get_phys_info(unsigned long *start, unsigned long *len, int fb_num);
 void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl);
 void mdss_fb_update_backlight(struct msm_fb_data_type *mfd);
-void mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data);
+int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data);
 void mdss_fb_signal_timeline(struct msm_sync_pt_data *sync_pt_data);
 int mdss_fb_register_mdp_instance(struct msm_mdp_interface *mdp);
 int mdss_fb_dcm(struct msm_fb_data_type *mfd, int req_state);

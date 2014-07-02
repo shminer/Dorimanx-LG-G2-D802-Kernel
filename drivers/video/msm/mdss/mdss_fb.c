@@ -1765,7 +1765,7 @@ static void mdss_fb_power_setting_idle(struct msm_fb_data_type *mfd)
 	}
 }
 
-void mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
+int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
 {
 	struct sync_fence *fences[MDP_MAX_FENCE_FD];
 	int fence_cnt;
@@ -1776,7 +1776,7 @@ void mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
 	mutex_lock(&sync_pt_data->sync_mutex);
 	/*
 	 * Assuming that acq_fen_cnt is sanitized in bufsync ioctl
-	 * to check for sync_pt_data->acq_fen_cnt) <= MDP_MAX_FENCE_FD
+	 * to check for sync_pt_data->acq_fen_cnt <= MDP_MAX_FENCE_FD
 	 */
 	fence_cnt = sync_pt_data->acq_fen_cnt;
 	sync_pt_data->acq_fen_cnt = 0;
@@ -1827,6 +1827,8 @@ void mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
 		for (; i < fence_cnt; i++)
 			sync_fence_put(fences[i]);
 	}
+
+	return fence_cnt;
 }
 
 /**
@@ -2441,12 +2443,10 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		return ret;
 	}
 
-	if (sync_pt_data->acq_fen_cnt) {
-		pr_warn("%s: currently %d fences active. waiting...\n",
-				sync_pt_data->fence_name,
-				sync_pt_data->acq_fen_cnt);
-		mdss_fb_wait_for_fence(sync_pt_data);
-	}
+	i = mdss_fb_wait_for_fence(sync_pt_data);
+	if (i > 0)
+		pr_warn("%s: waited on %d active fences\n",
+				sync_pt_data->fence_name, i);
 
 	mutex_lock(&sync_pt_data->sync_mutex);
 	for (i = 0; i < buf_sync->acq_fen_fd_cnt; i++) {
@@ -2475,9 +2475,9 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 	/* create fd */
 	rel_fen_fd = get_unused_fd_flags(0);
 	if (rel_fen_fd < 0) {
-		pr_err("%s: get_unused_fd_flags failed\n",
-				sync_pt_data->fence_name);
-		ret = -EIO;
+		pr_err("%s: get_unused_fd_flags failed error:0x%x\n",
+				sync_pt_data->fence_name, rel_fen_fd);
+		ret = rel_fen_fd;
 		goto buf_sync_err_2;
 	}
 
@@ -2488,6 +2488,7 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		pr_err("%s: copy_to_user failed\n", sync_pt_data->fence_name);
 		goto buf_sync_err_3;
 	}
+
 	mutex_unlock(&sync_pt_data->sync_mutex);
 
 	if (buf_sync->flags & MDP_BUF_SYNC_FLAG_WAIT)
