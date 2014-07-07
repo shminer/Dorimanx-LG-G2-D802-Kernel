@@ -120,6 +120,10 @@ static struct page_info *alloc_largest_available(struct ion_system_heap *heap,
 	struct page_info *info;
 	int i;
 
+	info = kmalloc(sizeof(struct page_info), GFP_KERNEL);
+	if (!info)
+		return NULL;
+
 	for (i = 0; i < num_orders; i++) {
 		if (size < order_to_size(orders[i]))
 			continue;
@@ -130,13 +134,13 @@ static struct page_info *alloc_largest_available(struct ion_system_heap *heap,
 		if (!page)
 			continue;
 
-		info = kmalloc(sizeof(struct page_info), GFP_KERNEL);
-		if (info) {
-			info->page = page;
-			info->order = orders[i];
-		}
+		info->page = page;
+		info->order = orders[i];
+		INIT_LIST_HEAD(&info->list);
 		return info;
 	}
+	kfree(info);
+
 	return NULL;
 }
 
@@ -157,6 +161,12 @@ static int ion_system_heap_allocate(struct ion_heap *heap,
 	unsigned long size_remaining = PAGE_ALIGN(size);
 	unsigned int max_order = orders[0];
 	bool split_pages = ion_buffer_fault_user_mappings(buffer);
+
+	if (align > PAGE_SIZE)
+		return -EINVAL;
+
+	if (size / PAGE_SIZE > totalram_pages / 2)
+		return -ENOMEM;
 
 	INIT_LIST_HEAD(&pages);
 	while (size_remaining > 0) {
@@ -443,8 +453,12 @@ static int ion_system_contig_heap_allocate(struct ion_heap *heap,
 					   unsigned long align,
 					   unsigned long flags)
 {
+	int order = get_order(len);
 	int ret;
 	struct kmalloc_buffer_info *info;
+
+	if (align > (PAGE_SIZE << order))
+		return -EINVAL;
 
 	info = kmalloc(sizeof(struct kmalloc_buffer_info), GFP_KERNEL);
 	if (!info) {

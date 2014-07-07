@@ -1674,15 +1674,6 @@ config MSM_IPC_LOGGING
 
 	  If in doubt, say no.
 
-config MSM_SMD_NMEA
-	bool "NMEA GPS Driver"
-	depends on MSM_SMD
-	default y
-	help
-	  Enable this to support the NMEA GPS device.
-
-	  If in doubt, say yes.
-
 config MSM_SDIO_TTY
 	bool "SDIO TTY Driver"
 	depends on MSM_SDIO_AL
@@ -1699,15 +1690,6 @@ config MSM_SMD_TTY
 	default y
 	help
 	  Provides TTY interfaces to interact with the modem.
-
-	  If in doubt, say yes.
-
-config MSM_SMD_QMI
-	bool "SMD QMI Driver"
-	depends on MSM_SMD
-	default y
-	help
-	  Manages network data connections.
 
 	  If in doubt, say yes.
 
