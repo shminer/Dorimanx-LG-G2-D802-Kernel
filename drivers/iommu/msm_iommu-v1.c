@@ -819,13 +819,12 @@ static void msm_iommu_detach_dev(struct iommu_domain *domain,
 	ctx_drvdata->asid = -1;
 
 	__reset_context(iommu_drvdata->base, ctx_drvdata->num);
-	
+
 	/*
 	 * Only reset the M2V tables on the very last detach */
 	if (!is_secure && iommu_drvdata->ctx_attach_count == 1) {
 		iommu_halt(iommu_drvdata);
 		__release_smg(iommu_drvdata->base);
-
 		iommu_resume(iommu_drvdata);
 	}
 

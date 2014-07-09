@@ -860,7 +860,7 @@ static int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd)
 		mdss_hw_init(mdss_res);
 	}
 
-	rc = mdss_mdp_ctl_start(ctl);
+	rc = mdss_mdp_ctl_start(ctl, false);
 	if (rc == 0) {
 		atomic_inc(&ov_active_panels);
 
@@ -1000,15 +1000,6 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 
 	if (data)
 		mdss_mdp_set_roi(ctl, data);
-
-	/*
-	 * Setup pipe in solid fill before unstaging,
-	 * to ensure no fetches are happening after dettach or reattach.
-	 */
-	list_for_each_entry(pipe, &mdp5_data->pipes_cleanup, cleanup_list) {
-		mdss_mdp_pipe_queue_data(pipe, NULL);
-		mdss_mdp_mixer_pipe_unstage(pipe);
-	}
 
 	list_for_each_entry(pipe, &mdp5_data->pipes_used, used_list) {
 		struct mdss_mdp_data *buf;
@@ -1156,6 +1147,7 @@ static int mdss_mdp_overlay_release(struct msm_fb_data_type *mfd, int ndx)
 					&mdp5_data->pipes_cleanup);
 			}
 			mutex_unlock(&mfd->lock);
+			mdss_mdp_mixer_pipe_unstage(pipe);
 			mdss_mdp_pipe_unmap(pipe);
 		}
 	}
@@ -1234,8 +1226,8 @@ static int __mdss_mdp_overlay_release_all(struct msm_fb_data_type *mfd,
 		}
 	}
 
-	if (!mfd->ref_cnt && !list_empty(&mdp5_data->pipes_cleanup)) {
-		pr_debug("fb%d:: free pipes present in cleanup list",
+	if (cnt == 0 && !list_empty(&mdp5_data->pipes_cleanup)) {
+		pr_debug("overlay release on fb%d called without commit!",
 			mfd->index);
 		cnt++;
 	}
@@ -1588,8 +1580,8 @@ int mdss_mdp_overlay_vsync_ctrl(struct msm_fb_data_type *mfd, int en)
 		return -ENODEV;
 	if (!ctl->add_vsync_handler || !ctl->remove_vsync_handler)
 		return -EOPNOTSUPP;
-
-	if (!ctl->power_on) {
+	if (!ctl->panel_data->panel_info.cont_splash_enabled
+			&& !ctl->power_on) {
 		pr_debug("fb%d vsync pending first update en=%d\n",
 				mfd->index, en);
 		return -EPERM;
@@ -1706,13 +1698,15 @@ static ssize_t mdss_mdp_vsync_show_event(struct device *dev,
 	u64 vsync_ticks;
 	int ret;
 
-	if (!mdp5_data->ctl || !mdp5_data->ctl->power_on)
+	if (!mdp5_data->ctl ||
+		(!mdp5_data->ctl->panel_data->panel_info.cont_splash_enabled
+			&& !mdp5_data->ctl->power_on))
 		return -EAGAIN;
 
 	vsync_ticks = ktime_to_ns(mdp5_data->vsync_time);
 
 	pr_debug("fb%d vsync=%llu", mfd->index, vsync_ticks);
-	ret = scnprintf(buf, PAGE_SIZE, "VSYNC=%llu\n", vsync_ticks);
+	ret = scnprintf(buf, PAGE_SIZE, "VSYNC=%llu", vsync_ticks);
 
 	return ret;
 }
@@ -2558,9 +2552,15 @@ static int mdss_mdp_overlay_handoff(struct msm_fb_data_type *mfd)
 		mdp5_data->ctl = ctl;
 	}
 
-	rc = mdss_mdp_ctl_setup(ctl);
-	if (rc)
+	/*
+	 * vsync interrupt needs on during continuous splash, this is
+	 * to initialize necessary ctl members here.
+	 */
+	rc = mdss_mdp_ctl_start(ctl, true);
+	if (rc) {
+		pr_err("Failed to initialize ctl\n");
 		goto error;
+	}
 
 	ctl->clk_rate = mdss_mdp_get_clk_rate(MDSS_CLK_MDP_SRC);
 	pr_debug("Set the ctl clock rate to %d Hz\n", ctl->clk_rate);

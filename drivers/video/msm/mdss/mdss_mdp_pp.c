@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1390,10 +1390,10 @@ static int pp_histogram_setup(u32 *op, u32 block, struct mdss_mdp_mixer *mix)
 		goto error;
 	}
 
-	mutex_lock(&hist_info->hist_mutex);
-	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	if (hist_info->col_en) {
 		*op |= op_flags;
+		mutex_lock(&hist_info->hist_mutex);
+		spin_lock_irqsave(&hist_info->hist_lock, flag);
 		col_state = hist_info->col_state;
 		if (hist_info->is_kick_ready &&
 			((col_state == HIST_IDLE) ||
@@ -1403,9 +1403,9 @@ static int pp_histogram_setup(u32 *op, u32 block, struct mdss_mdp_mixer *mix)
 			writel_relaxed(1, base + kick_base);
 			hist_info->col_state = HIST_START;
 		}
+		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
+		mutex_unlock(&hist_info->hist_mutex);
 	}
-	spin_unlock_irqrestore(&hist_info->hist_lock, flag);
-	mutex_unlock(&hist_info->hist_mutex);
 	ret = 0;
 error:
 	return ret;
@@ -2041,7 +2041,6 @@ int mdss_mdp_pp_init(struct device *dev)
 		for (i = 0; i < MDSS_MDP_MAX_DSPP; i++) {
 			mutex_init(&mdss_pp_res->dspp_hist[i].hist_mutex);
 			spin_lock_init(&mdss_pp_res->dspp_hist[i].hist_lock);
-			init_completion(&mdss_pp_res->dspp_hist[i].comp);
 		}
 	}
 	if (mdata) {
@@ -2049,7 +2048,6 @@ int mdss_mdp_pp_init(struct device *dev)
 		for (i = 0; i < mdata->nvig_pipes; i++) {
 			mutex_init(&vig[i].pp_res.hist.hist_mutex);
 			spin_lock_init(&vig[i].pp_res.hist.hist_lock);
-			init_completion(&vig[i].pp_res.hist.comp);
 		}
 		if (!mdata->pp_bus_hdl) {
 			pp_bus_pdata = &mdp_pp_bus_scale_table;
@@ -3194,23 +3192,22 @@ static int pp_histogram_enable(struct pp_hist_col_info *hist_info,
 
 	mutex_lock(&hist_info->hist_mutex);
 	/* check if it is idle */
-	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	if (hist_info->col_en) {
-		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 		pr_info("%s Hist collection has already been enabled %d",
 			__func__, (u32) ctl_base);
 		ret = -EINVAL;
 		goto exit;
 	}
-	hist_info->read_request = 0;
-	hist_info->col_state = HIST_RESET;
-	hist_info->col_en = true;
-	spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 	hist_info->frame_cnt = req->frame_cnt;
-	INIT_COMPLETION(hist_info->comp);
+	init_completion(&hist_info->comp);
 	hist_info->hist_cnt_read = 0;
 	hist_info->hist_cnt_sent = 0;
 	hist_info->hist_cnt_time = 0;
+	spin_lock_irqsave(&hist_info->hist_lock, flag);
+	hist_info->read_request = false;
+	hist_info->col_state = HIST_RESET;
+	hist_info->col_en = true;
+	spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 	hist_info->is_kick_ready = true;
 	mdss_mdp_hist_intr_req(&mdata->hist_intr, 3 << shift_bit, true);
 	writel_relaxed(req->frame_cnt, ctl_base + 8);
@@ -3322,19 +3319,18 @@ static int pp_histogram_disable(struct pp_hist_col_info *hist_info,
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 
 	mutex_lock(&hist_info->hist_mutex);
-	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	if (hist_info->col_en == false) {
-		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 		pr_debug("Histogram already disabled (%d)", (u32) ctl_base);
 		ret = -EINVAL;
 		goto exit;
 	}
+	complete_all(&hist_info->comp);
+	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	hist_info->col_en = false;
 	hist_info->col_state = HIST_UNKNOWN;
 	spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 	hist_info->is_kick_ready = false;
 	mdss_mdp_hist_intr_req(&mdata->hist_intr, done_bit, false);
-	complete_all(&hist_info->comp);
 	writel_relaxed(BIT(1), ctl_base);/* cancel */
 	ret = 0;
 exit:
@@ -3575,13 +3571,12 @@ static int pp_hist_collect(struct mdp_histogram_data *hist,
 	struct mdss_mdp_pipe *pipe;
 
 	mutex_lock(&hist_info->hist_mutex);
-	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	if ((hist_info->col_en == 0) ||
 			(hist_info->col_state == HIST_UNKNOWN)) {
-		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 		ret = -EINVAL;
 		goto hist_collect_exit;
 	}
+	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	/* wait for hist done if cache has no data */
 	if (hist_info->col_state != HIST_READY) {
 		hist_info->read_request = true;
@@ -3598,9 +3593,9 @@ static int pp_hist_collect(struct mdp_histogram_data *hist,
 				&(hist_info->comp), timeout);
 
 		mutex_lock(&hist_info->hist_mutex);
-		spin_lock_irqsave(&hist_info->hist_lock, flag);
 		if (wait_ret == 0) {
 			ret = -ETIMEDOUT;
+			spin_lock_irqsave(&hist_info->hist_lock, flag);
 			pr_debug("bin collection timedout, state %d",
 					hist_info->col_state);
 			/*
@@ -3615,8 +3610,8 @@ static int pp_hist_collect(struct mdp_histogram_data *hist,
 			 */
 			hist_info->hist_cnt_time++;
 			hist_info->col_state = HIST_READY;
-		} else if (wait_ret < 0) {
 			spin_unlock_irqrestore(&hist_info->hist_lock, flag);
+		} else if (wait_ret < 0) {
 			ret = -EINTR;
 			pr_debug("%s: bin collection interrupted",
 					__func__);
@@ -3624,24 +3619,28 @@ static int pp_hist_collect(struct mdp_histogram_data *hist,
 		}
 		if (hist_info->col_state != HIST_READY) {
 			ret = -ENODATA;
-			hist_info->col_state = HIST_READY;
 			pr_debug("%s: state is not ready: %d",
 					__func__, hist_info->col_state);
 			goto hist_collect_exit;
 		}
+	} else {
+		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 	}
+	spin_lock_irqsave(&hist_info->hist_lock, flag);
 	if (hist_info->col_state == HIST_READY) {
-		hist_info->col_state = HIST_IDLE;
 		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 		v_base = ctl_base + 0x1C;
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 		sum = pp_hist_read(v_base, hist_info);
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
-		if (expect_sum && sum != expect_sum)
+		spin_lock_irqsave(&hist_info->hist_lock, flag);
+		if (!expect_sum || sum == expect_sum)
+			hist_info->read_request = false;
+		else
 			ret = -ENODATA;
-	} else {
-		spin_unlock_irqrestore(&hist_info->hist_lock, flag);
+		hist_info->col_state = HIST_IDLE;
 	}
+	spin_unlock_irqrestore(&hist_info->hist_lock, flag);
 hist_collect_exit:
 	mutex_unlock(&hist_info->hist_mutex);
 	return ret;

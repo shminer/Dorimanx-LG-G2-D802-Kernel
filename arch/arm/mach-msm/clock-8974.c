@@ -5191,8 +5191,6 @@ static struct clk_lookup msm_clocks_8974_common[] __initdata = {
 	CLK_LOOKUP("core_clk", gcc_usb_hs_system_clk.c,   "msm_ehci_host"),
 	CLK_LOOKUP("sleep_clk", gcc_usb2b_phy_sleep_clk.c, "msm_ehci_host"),
 	CLK_LOOKUP("pwm_clk", div_clk2.c, "0-0048"),
-	CLK_LOOKUP("measure",   measure_clk.c, "fb000000.qcom,wcnss-wlan"),
-    CLK_LOOKUP("wcnss_debug", wcnss_m_clk, "fb000000.qcom,wcnss-wlan"),
 
 	CLK_LOOKUP("measure",   measure_clk.c, "fb000000.qcom,wcnss-wlan"),
 	CLK_LOOKUP("wcnss_debug", wcnss_m_clk, "fb000000.qcom,wcnss-wlan"),

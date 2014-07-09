@@ -654,7 +654,6 @@ static int mdss_fb_probe(struct platform_device *pdev)
 
 	mfd->ext_ad_ctrl = -1;
 	mfd->bl_level = 0;
-	mfd->bl_level_prev_scaled = 0;
 	mfd->bl_scale = 1024;
 	mfd->bl_min_lvl = 30;
 	mfd->fb_imgType = MDP_RGBA_8888;
@@ -1043,8 +1042,6 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 #if defined(CONFIG_MACH_LGE)
 			if (temp != -BOOT_BRIGHTNESS)
 #endif
-		mfd->bl_level_prev_scaled = mfd->bl_level_scaled;
-
 		if (!IS_CALIB_MODE_BL(mfd))
 			mdss_fb_scale_bl(mfd, &temp);
 		/*
@@ -1055,13 +1052,13 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 		 * as well as setting bl_level to bkl_lvl even though the
 		 * backlight has been set to the scaled value.
 		 */
-		if (mfd->bl_level_scaled == temp) {
+		if (mfd->bl_level_old == temp) {
 			mfd->bl_level = bkl_lvl;
 			return;
 		}
 		pdata->set_backlight(pdata, temp);
 		mfd->bl_level = bkl_lvl;
-		mfd->bl_level_scaled = temp;
+		mfd->bl_level_old = temp;
 
 		if (mfd->mdp.update_ad_input) {
 			update_ad_input = mfd->mdp.update_ad_input;
@@ -1078,17 +1075,17 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 {
 	struct mdss_panel_data *pdata;
 
-	mutex_lock(&mfd->bl_lock);
 	if (mfd->unset_bl_level && !mfd->bl_updated) {
 		pdata = dev_get_platdata(&mfd->pdev->dev);
 		if ((pdata) && (pdata->set_backlight)) {
+			mutex_lock(&mfd->bl_lock);
 			mfd->bl_level = mfd->unset_bl_level;
 			pdata->set_backlight(pdata, mfd->bl_level);
-			mfd->bl_level_scaled = mfd->unset_bl_level;
+			mfd->bl_level_old = mfd->unset_bl_level;
+			mutex_unlock(&mfd->bl_lock);
 			mfd->bl_updated = 1;
 		}
 	}
-	mutex_unlock(&mfd->bl_lock);
 }
 
 static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
@@ -1123,13 +1120,6 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 			mfd->update.is_suspend = 0;
 			mutex_unlock(&mfd->update.lock);
 		}
-
-		mutex_lock(&mfd->bl_lock);
-		if (!mfd->bl_updated) {
-			mfd->bl_updated = 1;
-			mdss_fb_set_backlight(mfd, mfd->bl_level_prev_scaled);
-		}
-		mutex_unlock(&mfd->bl_lock);
 		break;
 
 	case FB_BLANK_VSYNC_SUSPEND:
@@ -1165,12 +1155,6 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 //			cancel_work_sync(&mfd->commit_work); // compile error , 11/16 deco.park
 #endif
 
-			mutex_lock(&mfd->bl_lock);
-			mdss_fb_set_backlight(mfd, 0);
-			mfd->panel_power_on = false;
-			mfd->bl_updated = 0;
-			mutex_unlock(&mfd->bl_lock);
-
 			ret = mfd->mdp.off_fnc(mfd);
 			if (ret)
 				mfd->panel_power_on = curr_pwr_state;
@@ -1188,8 +1172,6 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		}
 		break;
 	}
-	/* Notify listeners */
-	sysfs_notify(&mfd->fbi->dev->kobj, NULL, "show_blank_event");
 
 	return ret;
 }
@@ -1812,7 +1794,7 @@ static void mdss_fb_power_setting_idle(struct msm_fb_data_type *mfd)
 	}
 }
 
-int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
+void mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
 {
 	struct sync_fence *fences[MDP_MAX_FENCE_FD];
 	int fence_cnt;
@@ -1823,7 +1805,7 @@ int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
 	mutex_lock(&sync_pt_data->sync_mutex);
 	/*
 	 * Assuming that acq_fen_cnt is sanitized in bufsync ioctl
-	 * to check for sync_pt_data->acq_fen_cnt <= MDP_MAX_FENCE_FD
+	 * to check for sync_pt_data->acq_fen_cnt) <= MDP_MAX_FENCE_FD
 	 */
 	fence_cnt = sync_pt_data->acq_fen_cnt;
 	sync_pt_data->acq_fen_cnt = 0;
@@ -1874,8 +1856,6 @@ int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data)
 		for (; i < fence_cnt; i++)
 			sync_fence_put(fences[i]);
 	}
-
-	return fence_cnt;
 }
 
 /**
@@ -2490,10 +2470,12 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		return ret;
 	}
 
-	i = mdss_fb_wait_for_fence(sync_pt_data);
-	if (i > 0)
-		pr_warn("%s: waited on %d active fences\n",
-				sync_pt_data->fence_name, i);
+	if (sync_pt_data->acq_fen_cnt) {
+		pr_warn("%s: currently %d fences active. waiting...\n",
+				sync_pt_data->fence_name,
+				sync_pt_data->acq_fen_cnt);
+		mdss_fb_wait_for_fence(sync_pt_data);
+	}
 
 	mutex_lock(&sync_pt_data->sync_mutex);
 	for (i = 0; i < buf_sync->acq_fen_fd_cnt; i++) {
@@ -2522,9 +2504,9 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 	/* create fd */
 	rel_fen_fd = get_unused_fd_flags(0);
 	if (rel_fen_fd < 0) {
-		pr_err("%s: get_unused_fd_flags failed error:0x%x\n",
-				sync_pt_data->fence_name, rel_fen_fd);
-		ret = rel_fen_fd;
+		pr_err("%s: get_unused_fd_flags failed\n",
+				sync_pt_data->fence_name);
+		ret = -EIO;
 		goto buf_sync_err_2;
 	}
 
@@ -2535,7 +2517,6 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		pr_err("%s: copy_to_user failed\n", sync_pt_data->fence_name);
 		goto buf_sync_err_3;
 	}
-
 	mutex_unlock(&sync_pt_data->sync_mutex);
 
 	if (buf_sync->flags & MDP_BUF_SYNC_FLAG_WAIT)
