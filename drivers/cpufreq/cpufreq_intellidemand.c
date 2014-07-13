@@ -38,7 +38,7 @@
 #define DEF_SAMPLING_RATE			(50000)
 #define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(10)
 #define DEF_FREQUENCY_UP_THRESHOLD		(60)
-#define DEF_SAMPLING_DOWN_FACTOR		(4)
+#define DEF_SAMPLING_DOWN_FACTOR		(1)
 #define MAX_SAMPLING_DOWN_FACTOR		(100000)
 #define MICRO_FREQUENCY_DOWN_DIFFERENTIAL	(3)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(70)
@@ -440,6 +440,8 @@ static ssize_t store_sync_freq(struct kobject *a, struct attribute *b,
 	ret = sscanf(buf, "%u", &input);
 	if (ret != 1)
 		return -EINVAL;
+	if (input <= 960000)
+		return count;
 	dbs_tuners_ins.sync_freq = input;
 
 	return count;
@@ -468,6 +470,8 @@ static ssize_t store_optimal_freq(struct kobject *a, struct attribute *b,
 	ret = sscanf(buf, "%u", &input);
 	if (ret != 1)
 		return -EINVAL;
+	if (input <= 960000)
+		return count;
 	dbs_tuners_ins.optimal_freq = input;
 
 	return count;
