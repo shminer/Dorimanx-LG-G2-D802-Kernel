@@ -1165,6 +1165,7 @@ err_supplies:
 	wcd9xxx_disable_supplies(wcd9xxx, pdata);
 err_codec:
 	kfree(wcd9xxx);
+	dev_set_drvdata(&client->dev, NULL);
 fail:
 	return ret;
 }
@@ -1177,6 +1178,7 @@ static int __devexit wcd9xxx_i2c_remove(struct i2c_client *client)
 	wcd9xxx = dev_get_drvdata(&client->dev);
 	wcd9xxx_disable_supplies(wcd9xxx, pdata);
 	wcd9xxx_device_exit(wcd9xxx);
+	dev_set_drvdata(&client->dev, NULL);
 	return 0;
 }
 
@@ -1425,7 +1427,7 @@ static struct wcd9xxx_pdata *wcd9xxx_populate_dt_pdata(struct device *dev)
 	BUG_ON(static_cnt <= 0 || ond_cnt < 0 || cp_supplies_cnt < 0);
 	if ((static_cnt + ond_cnt + cp_supplies_cnt)
 			> ARRAY_SIZE(pdata->regulator)) {
-		dev_err(dev, "%s: Num of supplies %u > max supported %u\n",
+		dev_err(dev, "%s: Num of supplies %u > max supported %zu\n",
 			__func__, static_cnt, ARRAY_SIZE(pdata->regulator));
 		goto err;
 	}
@@ -1674,6 +1676,7 @@ err_supplies:
 	wcd9xxx_disable_supplies(wcd9xxx, pdata);
 err_codec:
 	kfree(wcd9xxx);
+	slim_set_clientdata(slim, NULL);
 err:
 	return ret;
 }
@@ -1692,6 +1695,7 @@ static int wcd9xxx_slim_remove(struct slim_device *pdev)
 	slim_remove_device(wcd9xxx->slim_slave);
 	wcd9xxx_disable_supplies(wcd9xxx, pdata);
 	wcd9xxx_device_exit(wcd9xxx);
+	slim_set_clientdata(pdev, NULL);
 	return 0;
 }
 
