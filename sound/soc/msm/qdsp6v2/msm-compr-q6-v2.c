@@ -957,10 +957,6 @@ static int msm_compr_hw_params(struct snd_pcm_substream *substream,
 		    (params_periods(params) <= runtime->hw.channels_max))
 			prtd->channel_mode = params_channels(params);
 
-		ret = compressed_set_volume(prtd, 0);
-		if (ret < 0)
-			pr_err("%s : Set Volume failed : %d", __func__, ret);
-
 		ret = q6asm_set_softpause(prtd->audio_client, &softpause);
 		if (ret < 0)
 			pr_err("%s: Send SoftPause Param failed ret=%d\n",
@@ -1129,12 +1125,19 @@ static int msm_compr_ioctl(struct snd_pcm_substream *substream,
 			int i;
 			struct snd_dec_ddp *ddp =
 				&compr->info.codec_param.codec.options.ddp;
-			uint32_t params_length = ddp->params_length*sizeof(int);
+			uint32_t params_length = 0;
+			/* check integer overflow */
+			if (ddp->params_length > UINT_MAX/sizeof(int)) {
+				pr_err("%s: Integer overflow ddp->params_length %d\n",
+				__func__, ddp->params_length);
+				return -EINVAL;
+			}
+			params_length = ddp->params_length*sizeof(int);
 			if (params_length > MAX_AC3_PARAM_SIZE) {
 				/*MAX is 36*sizeof(int) this should not happen*/
-				pr_err("params_length(%d) is greater than %d",
-				params_length, MAX_AC3_PARAM_SIZE);
-				params_length = MAX_AC3_PARAM_SIZE;
+				pr_err("%s: params_length(%d) is greater than %zd\n",
+				__func__, params_length, MAX_AC3_PARAM_SIZE);
+				return -EINVAL;
 			}
 			pr_debug("SND_AUDIOCODEC_AC3\n");
 			compr->codec = FORMAT_AC3;
@@ -1143,7 +1146,7 @@ static int msm_compr_ioctl(struct snd_pcm_substream *substream,
 				pr_err("%s: copy ddp params value, size=%d\n",
 					__func__, params_length);
 			pr_debug("params_length: %d\n", ddp->params_length);
-			for (i = 0; i < params_length; i++)
+			for (i = 0; i < params_length/sizeof(int); i++)
 				pr_debug("params_value[%d]: %x\n", i,
 					params_value_data[i]);
 			for (i = 0; i < ddp->params_length/2; i++) {
@@ -1166,12 +1169,18 @@ static int msm_compr_ioctl(struct snd_pcm_substream *substream,
 			int i;
 			struct snd_dec_ddp *ddp =
 				&compr->info.codec_param.codec.options.ddp;
-			uint32_t params_length = ddp->params_length*sizeof(int);
+			uint32_t params_length = 0;
+			/* check integer overflow */
+			if (ddp->params_length > UINT_MAX/sizeof(int)) {
+				pr_err("%s: Integer overflow ddp->params_length %d\n",
+				__func__, ddp->params_length);
+				return -EINVAL;
+			}
 			if (params_length > MAX_AC3_PARAM_SIZE) {
 				/*MAX is 36*sizeof(int) this should not happen*/
-				pr_err("params_length(%d) is greater than %d",
-				params_length, MAX_AC3_PARAM_SIZE);
-				params_length = MAX_AC3_PARAM_SIZE;
+				pr_err("%s: params_length(%d) is greater than %d\n",
+				__func__, params_length, MAX_AC3_PARAM_SIZE);
+				return -EINVAL;
 			}
 			pr_debug("SND_AUDIOCODEC_EAC3\n");
 			compr->codec = FORMAT_EAC3;
