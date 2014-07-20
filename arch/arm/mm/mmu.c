@@ -1016,9 +1016,6 @@ void __init sanity_check_meminfo(void)
 		}
 	}
 #endif
-#ifdef CONFIG_DONT_MAP_HOLE_AFTER_MEMBANK0
-	find_memory_hole();
-#endif
 
 	for (i = 0, j = 0; i < meminfo.nr_banks; i++) {
 		struct membank *bank = &meminfo.bank[j];
@@ -1125,6 +1122,11 @@ void __init sanity_check_meminfo(void)
 	meminfo.nr_banks = j;
 	high_memory = __va(arm_lowmem_limit - 1) + 1;
 	memblock_set_current_limit(arm_lowmem_limit);
+}
+
+void __init dma_contiguous_early_removal_fixup(void)
+{
+	sanity_check_meminfo();
 }
 
 static inline void prepare_page_table(void)

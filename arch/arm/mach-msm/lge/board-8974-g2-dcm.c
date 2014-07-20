@@ -32,7 +32,7 @@
 #include <mach/gpiomux.h>
 #include <mach/msm_iomap.h>
 #ifdef CONFIG_ION_MSM
-#include <mach/ion.h>
+#include <linux/msm_ion.h>
 #endif
 #include <mach/msm_memtypes.h>
 #include <mach/msm_smd.h>
@@ -60,42 +60,13 @@
 extern int update_preset_lcdc_lut(void);
 #endif /* CONFIG_LCD_KCAL */
 
-static struct memtype_reserve msm8974_reserve_table[] __initdata = {
-	[MEMTYPE_SMI] = {
-	},
-	[MEMTYPE_EBI0] = {
-		.flags	=	MEMTYPE_FLAGS_1M_ALIGN,
-	},
-	[MEMTYPE_EBI1] = {
-		.flags	=	MEMTYPE_FLAGS_1M_ALIGN,
-	},
-};
-
-static int msm8974_paddr_to_memtype(phys_addr_t paddr)
-{
-	return MEMTYPE_EBI1;
-}
-
-static struct reserve_info msm8974_reserve_info __initdata = {
-	.memtype_reserve_table = msm8974_reserve_table,
-	.paddr_to_memtype = msm8974_paddr_to_memtype,
-};
-
 void __init msm_8974_reserve(void)
 {
-	reserve_info = &msm8974_reserve_info;
-	of_scan_flat_dt(dt_scan_for_memory_reserve, msm8974_reserve_table);
+	of_scan_flat_dt(dt_scan_for_memory_reserve, NULL);
 #ifdef CONFIG_MACH_LGE
 	of_scan_flat_dt(lge_init_dt_scan_chosen, NULL);
 #endif
-	msm_reserve();
 	lge_reserve();
-}
-
-static void __init msm8974_early_memory(void)
-{
-	reserve_info = &msm8974_reserve_info;
-	of_scan_flat_dt(dt_scan_for_memory_hole, msm8974_reserve_table);
 }
 
 #ifdef CONFIG_LGE_LCD_TUNING
@@ -297,11 +268,6 @@ void __init msm8974_init(void)
 	msm8974_add_drivers();
 }
 
-void __init msm8974_init_very_early(void)
-{
-	msm8974_early_memory();
-}
-
 static const char *msm8974_dt_match[] __initconst = {
 	"qcom,msm8974",
 	"qcom,apq8074",
@@ -316,7 +282,6 @@ DT_MACHINE_START(MSM8974_DT, "Qualcomm MSM 8974 (Flattened Device Tree)")
 	.timer = &msm_dt_timer,
 	.dt_compat = msm8974_dt_match,
 	.reserve = msm_8974_reserve,
-	.init_very_early = msm8974_init_very_early,
 	.restart = msm_restart,
 	.smp = &msm8974_smp_ops,
 MACHINE_END
