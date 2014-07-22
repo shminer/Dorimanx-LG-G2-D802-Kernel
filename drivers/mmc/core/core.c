@@ -938,7 +938,8 @@ struct mmc_async_req *mmc_start_req(struct mmc_host *host,
 			mmc_post_req(host, host->areq->mrq, 0);
 			host->areq = NULL;
 			if (areq) {
-				if (!(areq->cmd_flags & REQ_URGENT)) {
+				if (!(areq->cmd_flags &
+						MMC_REQ_NOREINSERT_MASK)) {
 					areq->reinsert_req(areq);
 					mmc_post_req(host, areq->mrq, 0);
 				} else {
@@ -1025,6 +1026,10 @@ EXPORT_SYMBOL(mmc_start_req);
  */
 void mmc_wait_for_req(struct mmc_host *host, struct mmc_request *mrq)
 {
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
+	if (mmc_bus_needs_resume(host))
+		mmc_resume_bus(host);
+#endif
 	__mmc_start_req(host, mrq);
 	mmc_wait_for_req_done(host, mrq);
 }
@@ -2096,9 +2101,6 @@ int mmc_resume_bus(struct mmc_host *host)
 		BUG_ON(!host->bus_ops->resume);
 		host->bus_ops->resume(host);
 	}
-
-	if (host->bus_ops->detect && !host->bus_dead)
-		host->bus_ops->detect(host);
 
 	mmc_bus_put(host);
 	printk("%s: Deferred resume completed\n", mmc_hostname(host));
@@ -3272,6 +3274,7 @@ void mmc_rescan(struct work_struct *work)
 		return;
 
 	mmc_bus_get(host);
+	mmc_rpm_hold(host, &host->class_dev);
 
 	/*
 	 * if there is a _removable_ card registered, check whether it is
@@ -3304,9 +3307,12 @@ void mmc_rescan(struct work_struct *work)
 
 	/* if there still is a card present, stop here */
 	if (host->bus_ops != NULL) {
+		mmc_rpm_release(host, &host->class_dev);
 		mmc_bus_put(host);
 		goto out;
 	}
+
+	mmc_rpm_release(host, &host->class_dev);
 
 	/*
 	 * Only we can add a new handler, so it's safe to
