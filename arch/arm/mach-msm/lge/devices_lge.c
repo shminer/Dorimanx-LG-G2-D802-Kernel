@@ -209,8 +209,13 @@ static struct persistent_ram lge_persist_ram = {
 void __init lge_add_persist_ram_devices(void)
 {
 	int ret;
+	struct memtype_reserve *mt = &reserve_info->memtype_reserve_table[MEMTYPE_EBI1];
 
 	/* ram->start = 0x7D600000; */
+	/* change to variable value to ram->start value */
+	lge_persist_ram.start = mt->start - LGE_PERSISTENT_RAM_SIZE;
+	pr_info("PERSIST RAM CONSOLE START ADDR : 0x%x\n", lge_persist_ram.start);
+
 	ret = persistent_ram_early_init(&lge_persist_ram);
 	if (ret) {
 		pr_err("%s: failed to initialize persistent ram\n", __func__);
