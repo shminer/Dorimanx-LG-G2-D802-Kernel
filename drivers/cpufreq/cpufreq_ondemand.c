@@ -967,16 +967,16 @@ static void dbs_refresh_callback(struct work_struct *work)
 	dbs_work = container_of(work, struct dbs_work_struct, work);
 	cpu = dbs_work->cpu;
 
-	get_online_cpus();
 
 	if (lock_policy_rwsem_write(cpu) < 0)
-		goto bail_acq_sema_failed;
+		return;
 
 	this_dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
 	policy = this_dbs_info->cur_policy;
 	if (!policy) {
 		/* CPU not using ondemand governor */
-		goto bail_incorrect_governor;
+		unlock_policy_rwsem_write(cpu);
+		return;
 	}
 
 	if (dbs_tuners_ins.input_boost)
@@ -997,12 +997,8 @@ static void dbs_refresh_callback(struct work_struct *work)
 				&this_dbs_info->prev_cpu_wall, dbs_tuners_ins.io_is_busy);
 	}
 
-bail_incorrect_governor:
 	unlock_policy_rwsem_write(cpu);
 
-bail_acq_sema_failed:
-	put_online_cpus();
-	return;
 }
 
 static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
