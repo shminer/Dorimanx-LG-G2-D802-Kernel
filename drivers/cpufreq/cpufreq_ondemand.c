@@ -34,6 +34,7 @@
 /* User tunabble controls */
 #define DEF_FREQUENCY_UP_THRESHOLD		(75)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(80)
+#define DEF_DOWN_THRESHOLD			(10)
 
 #define DEF_MIDDLE_GRID_STEP			(20)
 #define DEF_HIGH_GRID_STEP			(30)
@@ -50,7 +51,6 @@
 #define MAX_SAMPLING_DOWN_FACTOR		(3)
 #define MIN_FREQUENCY_UP_THRESHOLD		(11)
 #define MAX_FREQUENCY_UP_THRESHOLD		(100)
-#define DEF_DOWN_THRESHOLD			(5)
 
 /*
  * The polling frequency of this governor depends on the capability of
@@ -129,6 +129,7 @@ static struct dbs_tuners {
 	unsigned int sampling_rate;
 	unsigned int up_threshold;
 	unsigned int micro_freq_up_threshold;
+	unsigned int def_down_threshold;
 	unsigned int ignore_nice;
 	unsigned int sampling_down_factor;
 	int          powersave_bias;
@@ -143,6 +144,7 @@ static struct dbs_tuners {
 	.up_threshold = DEF_FREQUENCY_UP_THRESHOLD,
 	.sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR,
 	.micro_freq_up_threshold = MICRO_FREQUENCY_UP_THRESHOLD,
+	.def_down_threshold = DEF_DOWN_THRESHOLD,
 	.middle_grid_step = DEF_MIDDLE_GRID_STEP,
 	.high_grid_step = DEF_HIGH_GRID_STEP,
 	.middle_grid_load = DEF_MIDDLE_GRID_LOAD,
@@ -274,6 +276,7 @@ show_one(up_threshold, up_threshold);
 show_one(sampling_down_factor, sampling_down_factor);
 show_one(ignore_nice_load, ignore_nice);
 show_one(micro_freq_up_threshold, micro_freq_up_threshold);
+show_one(def_down_threshold, def_down_threshold);
 show_one(middle_grid_step, middle_grid_step);
 show_one(high_grid_step, high_grid_step);
 show_one(middle_grid_load, middle_grid_load);
@@ -434,6 +437,20 @@ static ssize_t store_micro_freq_up_threshold(struct kobject *a,
 	if (ret != 1)
 		return -EINVAL;
 	dbs_tuners_ins.micro_freq_up_threshold = input;
+
+	return count;
+}
+
+static ssize_t store_def_down_threshold(struct kobject *a,
+			struct attribute *b, const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	dbs_tuners_ins.def_down_threshold = input;
 
 	return count;
 }
@@ -611,6 +628,7 @@ define_one_global_rw(sampling_down_factor);
 define_one_global_rw(ignore_nice_load);
 define_one_global_rw(powersave_bias);
 define_one_global_rw(micro_freq_up_threshold);
+define_one_global_rw(def_down_threshold);
 define_one_global_rw(input_boost);
 define_one_global_rw(optimal_max_freq);
 define_one_global_rw(middle_grid_step);
@@ -628,6 +646,7 @@ static struct attribute *dbs_attributes[] = {
 	&io_is_busy.attr,
 	&optimal_max_freq.attr,
 	&micro_freq_up_threshold.attr,
+	&def_down_threshold.attr,
 	&input_boost.attr,
 	&middle_grid_step.attr,
 	&high_grid_step.attr,
@@ -811,7 +830,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			this_dbs_info->rate_mult =
 				dbs_tuners_ins.sampling_down_factor;
 		dbs_freq_increase(policy, freq_target);
-	} else if (max_load < DEF_DOWN_THRESHOLD) {
+	} else if (max_load < dbs_tuners_ins.def_down_threshold) {
 		/* No longer fully busy, reset rate_mult */
 		this_dbs_info->rate_mult = 1;
 
