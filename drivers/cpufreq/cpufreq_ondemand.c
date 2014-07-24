@@ -32,9 +32,9 @@
  */
 
 /* User tunabble controls */
-#define DEF_FREQUENCY_UP_THRESHOLD		(75)
+#define DEF_FREQUENCY_UP_THRESHOLD		(80)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(80)
-#define DEF_DOWN_THRESHOLD			(10)
+#define DEF_DOWN_THRESHOLD			(25)
 
 #define DEF_MIDDLE_GRID_STEP			(20)
 #define DEF_HIGH_GRID_STEP			(30)
@@ -44,7 +44,7 @@
 #define DEF_SAMPLING_DOWN_FACTOR		(1)
 #define DEF_SAMPLING_RATE			(50000)
 
-#define DEF_OPTIMAL_MAX_FREQ			(1574400)
+#define DEF_OPTIMAL_MAX_FREQ			(2265600)
 
 /* Kernel tunabble controls */
 #define MICRO_FREQUENCY_MIN_SAMPLE_RATE		(10000)
