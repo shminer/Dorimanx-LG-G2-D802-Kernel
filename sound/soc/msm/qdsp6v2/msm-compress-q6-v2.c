@@ -718,9 +718,9 @@ static int msm_compr_configure_dsp(struct snd_compr_stream *cstream)
 		.rampingcurve = SOFT_VOLUME_CURVE_LINEAR,
 	};
 	if (prtd->codec_param.codec.format == SNDRV_PCM_FORMAT_S24_LE)
-		prtd->bits_per_sample = 24;
+		bits_per_sample = 24;
 	if (prtd->codec_param.codec.format == SNDRV_PCM_FORMAT_S32_LE)
-		prtd->bits_per_sample = 32;
+		bits_per_sample = 32;
 
 	pr_debug("%s: stream_id %d\n", __func__, ac->stream_id);
 #ifdef CONFIG_HIFI_SOUND
