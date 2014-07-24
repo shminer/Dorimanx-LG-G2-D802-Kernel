@@ -157,11 +157,6 @@ static struct dbs_tuners {
 	.sampling_rate = DEF_SAMPLING_RATE,
 };
 
-#ifdef CONFIG_MACH_LGE
-/* Boost CPU When wakeup */
-extern int boost_freq;
-#endif
-
 /*
  * Find right freq to be set now with powersave_bias on.
  * Returns the freq_hi to be used right now and will set freq_hi_jiffies,
@@ -798,15 +793,6 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	cpufreq_notify_utilization(policy, cur_load);
 
-#ifdef CONFIG_MACH_LGE
-/* Boost CPU When wakeup */
-	if (boost_freq == 2) {
-		if (policy->cur < policy->max) {
-			dbs_freq_increase(policy, policy->max);
-		}
-		return;
-	}
-#endif
 	/* Check for frequency increase */
 	if (max_load > dbs_tuners_ins.up_threshold) {
 		int freq_target, freq_div;
