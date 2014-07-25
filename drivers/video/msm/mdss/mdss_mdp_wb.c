@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -51,7 +51,8 @@ enum mdss_mdp_wb_node_state {
 	REGISTERED,
 	IN_FREE_QUEUE,
 	IN_BUSY_QUEUE,
-	WITH_CLIENT
+	WITH_CLIENT,
+	WB_BUFFER_READY,
 };
 
 struct mdss_mdp_wb_data {
@@ -360,8 +361,8 @@ static struct mdss_mdp_wb_data *get_local_node(struct mdss_mdp_wb *wb,
 	if (!list_empty(&wb->register_queue)) {
 		list_for_each_entry(node, &wb->register_queue, registered_entry)
 		if (node->buf_info.iova == data->iova) {
-			pr_debug("found node iova=%pa addr=%pa\n",
-				 &data->iova, &node->buf_data.p[0].addr);
+			pr_debug("found node iova=%x addr=%x\n",
+				 data->iova, node->buf_data.p[0].addr);
 			return node;
 		}
 	}
@@ -386,8 +387,7 @@ static struct mdss_mdp_wb_data *get_local_node(struct mdss_mdp_wb *wb,
 		return NULL;
 	}
 
-	pr_debug("register node iova=0x%pa addr=0x%pa\n", &data->iova,
-								&buf->addr);
+	pr_debug("register node iova=0x%x addr=0x%x\n", data->iova, buf->addr);
 
 	return node;
 }
@@ -424,8 +424,8 @@ static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 		goto register_fail;
 	}
 
-	pr_debug("register node mem_id=%d offset=%u addr=0x%pa len=%d\n",
-		 data->memory_id, data->offset, &buf->addr, buf->len);
+	pr_debug("register node mem_id=%d offset=%u addr=0x%x len=%d\n",
+		 data->memory_id, data->offset, buf->addr, buf->len);
 
 	return node;
 
@@ -439,6 +439,7 @@ static int mdss_mdp_wb_queue(struct msm_fb_data_type *mfd,
 {
 	struct mdss_mdp_wb *wb = mfd_to_wb(mfd);
 	struct mdss_mdp_wb_data *node = NULL;
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
 	int ret = 0;
 
 	if (!wb) {
@@ -448,19 +449,46 @@ static int mdss_mdp_wb_queue(struct msm_fb_data_type *mfd,
 
 	pr_debug("fb%d queue\n", wb->fb_ndx);
 
+	if (!mfd->panel_info->cont_splash_enabled)
+		mdss_iommu_attach(mdp5_data->mdata);
+
 	mutex_lock(&wb->lock);
 	if (local)
 		node = get_local_node(wb, data);
 	if (node == NULL)
 		node = get_user_node(mfd, data);
 
-	if (!node || node->state == IN_BUSY_QUEUE ||
-	    node->state == IN_FREE_QUEUE) {
-		pr_err("memory not registered or Buffer already with us\n");
-		ret = -EINVAL;
+	if (!node) {
+		pr_err("memory not registered\n");
+		ret = -ENOENT;
 	} else {
-		list_add_tail(&node->active_entry, &wb->free_queue);
-		node->state = IN_FREE_QUEUE;
+		struct mdss_mdp_img_data *buf = &node->buf_data.p[0];
+
+		switch (node->state) {
+		case IN_FREE_QUEUE:
+			pr_err("node 0x%pa was already queueued before\n",
+					&buf->addr);
+			ret = -EINVAL;
+			break;
+		case IN_BUSY_QUEUE:
+			pr_err("node 0x%pa still in busy state\n", &buf->addr);
+			ret = -EBUSY;
+			break;
+		case WB_BUFFER_READY:
+			pr_debug("node 0x%pa re-queueded without dequeue\n",
+				&buf->addr);
+			list_del(&node->active_entry);
+		case WITH_CLIENT:
+		case REGISTERED:
+			list_add_tail(&node->active_entry, &wb->free_queue);
+			node->state = IN_FREE_QUEUE;
+			break;
+		default:
+			pr_err("Invalid node 0x%pa state %d\n",
+				&buf->addr, node->state);
+			ret = -EINVAL;
+			break;
+		}
 	}
 	mutex_unlock(&wb->lock);
 
@@ -510,7 +538,7 @@ static int mdss_mdp_wb_dequeue(struct msm_fb_data_type *mfd,
 		memcpy(data, &node->buf_info, sizeof(*data));
 
 		buf = &node->buf_data.p[0];
-		pr_debug("found node addr=%pa len=%d\n", &buf->addr, buf->len);
+		pr_debug("found node addr=%x len=%d\n", buf->addr, buf->len);
 	} else {
 		pr_debug("node is NULL, wait for next\n");
 		ret = -ENOBUFS;
@@ -529,6 +557,8 @@ int mdss_mdp_wb_kickoff(struct msm_fb_data_type *mfd)
 
 	if (!ctl->power_on)
 		return 0;
+	memset(&wb_args, 0, sizeof(wb_args));
+
 
 	mutex_lock(&mdss_mdp_wb_buf_lock);
 	if (wb) {
@@ -570,6 +600,7 @@ int mdss_mdp_wb_kickoff(struct msm_fb_data_type *mfd)
 	if (wb && node) {
 		mutex_lock(&wb->lock);
 		list_add_tail(&node->active_entry, &wb->busy_queue);
+		node->state = WB_BUFFER_READY;
 		mutex_unlock(&wb->lock);
 		wake_up(&wb->wait_q);
 	}

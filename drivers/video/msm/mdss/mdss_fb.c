@@ -32,8 +32,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/msm_mdp.h>
-#include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/proc_fs.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
@@ -44,6 +42,7 @@
 #include <linux/sync.h>
 #include <linux/sw_sync.h>
 #include <linux/file.h>
+#include <linux/memory_alloc.h>
 #include <linux/kthread.h>
 
 #include <mach/board.h>
@@ -1269,58 +1268,42 @@ static struct fb_ops mdss_fb_ops = {
 static int mdss_fb_alloc_fbmem_iommu(struct msm_fb_data_type *mfd, int dom)
 {
 	void *virt = NULL;
-	phys_addr_t phys = 0;
+	unsigned long phys = 0;
 	size_t size = 0;
 	struct platform_device *pdev = mfd->pdev;
-	int rc = 0;
-	struct device_node *fbmem_pnode = NULL;
 
 	if (!pdev || !pdev->dev.of_node) {
 		pr_err("Invalid device node\n");
 		return -ENODEV;
 	}
 
-	fbmem_pnode = of_parse_phandle(pdev->dev.of_node,
-		"linux,contiguous-region", 0);
-	if (!fbmem_pnode) {
-		pr_debug("fbmem is not reserved for %s\n", pdev->name);
+	if (of_property_read_u32(pdev->dev.of_node,
+				 "qcom,memory-reservation-size",
+				 &size) || !size) {
 		mfd->fbi->screen_base = NULL;
 		mfd->fbi->fix.smem_start = 0;
 		mfd->fbi->fix.smem_len = 0;
 		return 0;
-	} else {
-		const u32 *addr;
-		u64 len;
-
-		addr = of_get_address(fbmem_pnode, 0, &len, NULL);
-		if (!addr) {
-			pr_err("fbmem size is not specified\n");
-			of_node_put(fbmem_pnode);
-			return -EINVAL;
-		}
-		size = (size_t)len;
-		of_node_put(fbmem_pnode);
 	}
 
-	pr_debug("%s frame buffer reserve_size=0x%zx\n", __func__, size);
+	pr_info("%s frame buffer reserve_size=0x%x\n", __func__, size);
 
 	if (size < PAGE_ALIGN(mfd->fbi->fix.line_length *
 			      mfd->fbi->var.yres_virtual))
 		pr_warn("reserve size is smaller than framebuffer size\n");
 
-	virt = dma_alloc_coherent(&pdev->dev, size, &phys, GFP_KERNEL);
+	virt = allocate_contiguous_memory(size, MEMTYPE_EBI1, SZ_1M, 0);
 	if (!virt) {
-		pr_err("unable to alloc fbmem size=%zx\n", size);
+		pr_err("unable to alloc fbmem size=%u\n", size);
 		return -ENOMEM;
 	}
 
-	rc = msm_iommu_map_contig_buffer(phys, dom, 0, size, SZ_4K, 0,
-					    &mfd->iova);
-	if (rc)
-		pr_warn("Cannot map fb_mem %pa to IOMMU. rc=%d\n", &phys, rc);
+	phys = memory_pool_node_paddr(virt);
 
-	pr_debug("alloc 0x%zxB @ (%pa phys) (0x%p virt) (%pa iova) for fb%d\n",
-		 size, &phys, virt, &mfd->iova, mfd->index);
+	msm_iommu_map_contig_buffer(phys, dom, 0, size, SZ_4K, 0,
+					    &mfd->iova);
+	pr_info("allocating %u bytes at %p (%lx phys) for fb %d\n",
+		 size, virt, phys, mfd->index);
 
 #ifdef CONFIG_LGE_HANDLE_PANIC
 	/* save fb1 address for crash handler display buffer */
@@ -1328,6 +1311,7 @@ static int mdss_fb_alloc_fbmem_iommu(struct msm_fb_data_type *mfd, int dom)
 				(mfd->fbi->fix.line_length *
 				mfd->fbi->var.yres)));
 #endif
+
 	mfd->fbi->screen_base = virt;
 	mfd->fbi->fix.smem_start = phys;
 	mfd->fbi->fix.smem_len = size;
@@ -2799,7 +2783,7 @@ int mdss_fb_register_mdp_instance(struct msm_mdp_interface *mdp)
 }
 EXPORT_SYMBOL(mdss_fb_register_mdp_instance);
 
-int mdss_fb_get_phys_info(dma_addr_t *start, unsigned long *len, int fb_num)
+int mdss_fb_get_phys_info(unsigned long *start, unsigned long *len, int fb_num)
 {
 	struct fb_info *info;
 	struct msm_fb_data_type *mfd;

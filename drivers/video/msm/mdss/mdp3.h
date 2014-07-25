@@ -163,7 +163,7 @@ struct mdp3_hw_resource {
 };
 
 struct mdp3_img_data {
-	dma_addr_t addr;
+	u32 addr;
 	u32 len;
 	u32 padding;
 	u32 flags;

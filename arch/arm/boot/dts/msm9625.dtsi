@@ -898,7 +898,8 @@
 
 	qcom,msm-rtb {
 		compatible = "qcom,msm-rtb";
-		qcom,rtb-size = <0x1000>; /* 4K EBI1 buffer */
+		qcom,memory-reservation-type = "EBI1";
+		qcom,memory-reservation-size = <0x1000>; /* 4K EBI1 buffer */
 	};
 
         qcom,msm-mem-hole {

@@ -216,7 +216,7 @@ int ion_removed_heap_map_user(struct ion_heap *heap, struct ion_buffer *buffer,
 		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 
 	ret_value =  remap_pfn_range(vma, vma->vm_start,
-			PFN_DOWN(buffer->priv_phys) + vma->vm_pgoff,
+			__phys_to_pfn(buffer->priv_phys) + vma->vm_pgoff,
 			vma->vm_end - vma->vm_start,
 			vma->vm_page_prot);
 
@@ -264,8 +264,8 @@ static int ion_removed_print_debug(struct ion_heap *heap, struct seq_file *s,
 				da = data->addr-1;
 				seq_printf(s, "%16.s %14pa %14pa %14lu (%lx)\n",
 					   "FREE", &last_end, &da,
-					   (unsigned long)data->addr-last_end,
-					   (unsigned long)data->addr-last_end);
+					   data->addr-last_end,
+					   data->addr-last_end);
 			}
 
 			if (data->client_name)

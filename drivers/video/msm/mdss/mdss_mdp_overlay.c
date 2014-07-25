@@ -1292,10 +1292,13 @@ static int mdss_mdp_overlay_queue(struct msm_fb_data_type *mfd,
 	flags = (pipe->flags & MDP_SECURE_OVERLAY_SESSION);
 	flags |= (pipe->flags & MDP_SECURE_DISPLAY_OVERLAY_SESSION);
 
+	if (!mfd->panel_info->cont_splash_enabled)
+		mdss_iommu_attach(mdata);
+
 	src_data = &pipe->back_buf;
 	if (src_data->num_planes) {
-		pr_warn("dropped buffer pnum=%d play=%d addr=0x%pa\n",
-			pipe->num, pipe->play_cnt, &src_data->p[0].addr);
+		pr_warn("dropped buffer pnum=%d play=%d addr=0x%x\n",
+			pipe->num, pipe->play_cnt, src_data->p[0].addr);
 		mdss_mdp_overlay_free_buf(src_data);
 	}
 
