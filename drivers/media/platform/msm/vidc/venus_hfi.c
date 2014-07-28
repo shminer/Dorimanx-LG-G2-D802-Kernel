@@ -669,19 +669,13 @@ static void venus_hfi_unvote_buses(void *dev, enum mem_type mtype)
 	}
 }
 
-#define BUS_LOAD(__w, __h, __fps) (\
-	/* Something's fishy if the width & height aren't macroblock aligned */\
-	BUILD_BUG_ON_ZERO(!IS_ALIGNED(__h, 16) || !IS_ALIGNED(__w, 16)) ?: \
-	(__h >> 4) * (__w >> 4) * __fps)
-
 static const u32 venus_hfi_bus_table[] = {
-	BUS_LOAD(640, 480, 30),
-	BUS_LOAD(1280, 736, 30),
-	BUS_LOAD(1920, 1088, 30),
-	BUS_LOAD(1920, 1088, 60),
-	BUS_LOAD(3840, 2176, 24),
-	BUS_LOAD(4096, 2176, 24),
-	BUS_LOAD(3840, 2176, 30),
+	36000,
+	110400,
+	244800,
+	489000,
+	783360,
+	979200,
 };
 
 static int venus_hfi_get_bus_vector(struct venus_hfi_device *device, int load,
@@ -3299,25 +3293,6 @@ static int protect_cp_mem(struct venus_hfi_device *device)
 	return rc;
 }
 
-static int venus_hfi_suspend(void *dev)
-{
-	int rc = 0;
-	struct venus_hfi_device *device = (struct venus_hfi_device *) dev;
-
-	if (!device) {
-		dprintk(VIDC_ERR, "%s invalid device\n", __func__);
-		return -EINVAL;
-	}
-	dprintk(VIDC_INFO, "%s\n", __func__);
-
-	if (device->power_enabled) {
-		venus_hfi_try_clk_gating(device);
-		rc = flush_delayed_work(&venus_hfi_pm_work);
-		dprintk(VIDC_INFO, "%s flush delayed work %d\n", __func__, rc);
-	}
-	return 0;
-}
-
 static int venus_hfi_load_fw(void *dev)
 {
 	int rc = 0;
@@ -3707,7 +3682,6 @@ static void venus_init_hfi_callbacks(struct hfi_device *hdev)
 	hdev->capability_check = venus_hfi_capability_check;
 	hdev->get_core_capabilities = venus_hfi_get_core_capabilities;
 	hdev->power_enable = venus_hfi_power_enable;
-	hdev->suspend = venus_hfi_suspend;
 }
 
 int venus_hfi_initialize(struct hfi_device *hdev, u32 device_id,

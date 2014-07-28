@@ -33,3 +33,4 @@ ui_print("Kernel Installed! enjoy :)");
 delete("/tmp/loki.sh");
 unmount("/system");
 show_progress(0.100000, 0);
+

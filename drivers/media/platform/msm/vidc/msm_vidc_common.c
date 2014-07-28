@@ -46,7 +46,6 @@
 	u32 __mbs = (__h >> 4) * (__w >> 4);\
 	__mbs;\
 })
-
 static bool is_turbo_requested(struct msm_vidc_core *core,
 		enum session_type type)
 {
@@ -2008,33 +2007,6 @@ static int msm_comm_session_close(int flipped_state,
 	}
 	change_inst_state(inst, MSM_VIDC_CLOSE);
 exit:
-	return rc;
-}
-
-int msm_comm_suspend(int core_id)
-{
-	struct hfi_device *hdev;
-	struct msm_vidc_core *core;
-	int rc = 0;
-
-	core = get_vidc_core(core_id);
-	if (!core) {
-		dprintk(VIDC_ERR,
-			"%s: Failed to find core for core_id = %d\n",
-			__func__, core_id);
-		return -EINVAL;
-	}
-
-	hdev = (struct hfi_device *)core->device;
-	if (!hdev) {
-		dprintk(VIDC_ERR, "%s Invalid device handle\n", __func__);
-		return -EINVAL;
-	}
-
-	rc = call_hfi_op(hdev, suspend, hdev->hfi_device_data);
-	if (rc)
-		dprintk(VIDC_WARN, "Failed to suspend\n");
-
 	return rc;
 }
 
