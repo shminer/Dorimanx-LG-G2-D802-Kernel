@@ -16,6 +16,10 @@
  *
  */
 
+#ifdef CONFIG_MACH_LGE
+#define CONFIG_LCD_NOTIFY 1
+#endif
+
 #include <linux/module.h>
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
@@ -178,9 +182,6 @@ static int lcd_notifier_callback(struct notifier_block *nb,
                                  unsigned long event, void *data)
 {
 	switch (event) {
-	case LCD_EVENT_ON_END:
-	case LCD_EVENT_OFF_START:
-		break;
 	case LCD_EVENT_ON_START:
 		__msm_limit_resume();
 		break;
@@ -200,9 +201,11 @@ static struct power_suspend msm_limit_power_suspend_driver = {
 static struct early_suspend msm_limit_early_suspend_driver = {
 	.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 10,
 #endif
+#ifndef CONFIG_LCD_NOTIFY
 	.suspend = __msm_limit_suspend,
 	.resume = __msm_limit_resume,
 };
+#endif
 #endif
 
 static int msm_cpufreq_limit_start(void)

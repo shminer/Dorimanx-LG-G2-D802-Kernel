@@ -10,6 +10,10 @@
  *
  */
 
+#ifdef CONFIG_MACH_LGE
+#define CONFIG_LCD_NOTIFY 1
+#endif
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/cpu.h>
@@ -51,7 +55,7 @@
 	defined(CONFIG_POWERSUSPEND) || \
 	defined(CONFIG_HAS_EARLYSUSPEND)
 #define DEFAULT_SUSPEND_DEFER_TIME	10
-#define DEFAULT_MAX_CPUS_ONLINE_SUSP	NR_CPUS / 2
+#define DEFAULT_MAX_CPUS_ONLINE_SUSP	1
 #endif
 
 /*
@@ -587,6 +591,7 @@ static void __msm_hotplug_suspend(struct early_suspend *handler)
 	INIT_DELAYED_WORK(&hotplug.suspend_work, msm_hotplug_suspend);
 	schedule_delayed_work_on(0, &hotplug.suspend_work,
 			msecs_to_jiffies(hotplug.suspend_defer_time * 1000));
+	dprintk("%s: suspended.\n", MSM_HOTPLUG);
 }
 
 #ifdef CONFIG_LCD_NOTIFY
@@ -599,6 +604,7 @@ static void __msm_hotplug_resume(struct early_suspend *handler)
 {
 	cancel_delayed_work_sync(&hotplug.suspend_work);
 	schedule_work_on(0, &hotplug.resume_work);
+	dprintk("%s: resumed.\n", MSM_HOTPLUG);
 }
 
 #ifdef CONFIG_LCD_NOTIFY
@@ -606,9 +612,6 @@ static int lcd_notifier_callback(struct notifier_block *nb,
                                  unsigned long event, void *data)
 {
 	switch (event) {
-	case LCD_EVENT_ON_END:
-	case LCD_EVENT_OFF_START:
-		break;
 	case LCD_EVENT_ON_START:
 		__msm_hotplug_resume();
 		break;
@@ -627,9 +630,11 @@ static struct power_suspend msm_hotplug_power_suspend_driver = {
 static struct early_suspend msm_hotplug_early_suspend_driver = {
 	.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 10,
 #endif
+#ifndef CONFIG_LCD_NOTIFY
 	.suspend = __msm_hotplug_suspend,
 	.resume = __msm_hotplug_resume,
 };
+#endif
 #endif
 
 static void hotplug_input_event(struct input_handle *handle, unsigned int type,

@@ -10,6 +10,10 @@
  *
  */
 
+#ifdef CONFIG_MACH_LGE
+#define CONFIG_LCD_NOTIFY 1
+#endif
+
 #include <linux/workqueue.h>
 #include <linux/cpu.h>
 #include <linux/sched.h>
@@ -45,7 +49,7 @@
 	defined(CONFIG_POWERSUSPEND) || \
 	defined(CONFIG_HAS_EARLYSUSPEND)
 #define DEFAULT_SUSPEND_DEFER_TIME	10
-#define DEFAULT_MAX_CPUS_ONLINE_SUSP	NR_CPUS / 2
+#define DEFAULT_MAX_CPUS_ONLINE_SUSP	1
 #endif
 
 #define CAPACITY_RESERVE		50
@@ -390,6 +394,7 @@ static void __intelli_plug_suspend(struct early_suspend *handler)
 	INIT_DELAYED_WORK(&suspend_work, intelli_plug_suspend);
 	schedule_delayed_work_on(0, &suspend_work,
 				 msecs_to_jiffies(suspend_defer_time * 1000));
+	dprintk("%s: suspended.\n", INTELLI_PLUG);
 }
 
 #ifdef CONFIG_LCD_NOTIFY
@@ -402,16 +407,14 @@ static void __intelli_plug_resume(struct early_suspend *handler)
 {
 	cancel_delayed_work_sync(&suspend_work);
 	schedule_work_on(0, &resume_work);
+	dprintk("%s: resumed.\n", INTELLI_PLUG);
 }
 
 #ifdef CONFIG_LCD_NOTIFY
-static int lcd_notifier_callback(struct notifier_block *this,
+static int lcd_notifier_callback(struct notifier_block *nb,
 				unsigned long event, void *data)
 {
 	switch (event) {
-	case LCD_EVENT_ON_END:
-	case LCD_EVENT_OFF_START:
-		break;
 	case LCD_EVENT_ON_START:
 		__intelli_plug_resume();
 		break;
