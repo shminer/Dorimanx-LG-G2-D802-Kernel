@@ -535,6 +535,7 @@ static void msm_hotplug_suspend(struct work_struct *work)
 				continue;
 			cpu_down(cpu);
 		}
+		hotplug.need_boost = 1;
 		dprintk("%s: suspended.\n", MSM_HOTPLUG);
 	}
 }
@@ -559,8 +560,6 @@ static void __ref msm_hotplug_resume(struct work_struct *work)
 			cpu_up(cpu);
 			apply_down_lock(cpu);
 		}
-		hotplug.need_boost = 1;
-
 		reschedule_hotplug_work();
 
 		dprintk("%s: resumed.\n", MSM_HOTPLUG);
