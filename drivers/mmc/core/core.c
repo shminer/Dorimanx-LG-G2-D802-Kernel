@@ -938,8 +938,7 @@ struct mmc_async_req *mmc_start_req(struct mmc_host *host,
 			mmc_post_req(host, host->areq->mrq, 0);
 			host->areq = NULL;
 			if (areq) {
-				if (!(areq->cmd_flags &
-						MMC_REQ_NOREINSERT_MASK)) {
+				if (!(areq->cmd_flags & REQ_URGENT)) {
 					areq->reinsert_req(areq);
 					mmc_post_req(host, areq->mrq, 0);
 				} else {
