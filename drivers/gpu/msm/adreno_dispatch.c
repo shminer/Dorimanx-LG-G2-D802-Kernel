@@ -1730,10 +1730,9 @@ static ssize_t _store_uint(struct adreno_dispatcher *dispatcher,
 		struct dispatcher_attribute *attr,
 		const char *buf, size_t size)
 {
-	unsigned int val = 0;
-	int ret;
+	unsigned long val;
+	int ret = kstrtoul(buf, 0, &val);
 
-	ret = kgsl_sysfs_store(buf, 0, &val);
 	if (ret)
 		return ret;
 
@@ -1748,7 +1747,7 @@ static ssize_t _show_uint(struct adreno_dispatcher *dispatcher,
 		struct dispatcher_attribute *attr,
 		char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n",
+	return snprintf(buf, PAGE_SIZE, "%d\n",
 		*((unsigned int *) attr->value));
 }
 
