@@ -46,7 +46,6 @@
 	u32 __mbs = (__h >> 4) * (__w >> 4);\
 	__mbs;\
 })
-
 static bool is_turbo_requested(struct msm_vidc_core *core,
 		enum session_type type)
 {

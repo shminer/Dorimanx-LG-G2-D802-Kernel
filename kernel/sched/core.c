@@ -4607,11 +4607,13 @@ static int sched_copy_attr(struct sched_attr __user *uattr,
 	 */
 	attr->sched_nice = clamp(attr->sched_nice, -20, 19);
 
-	return 0;
+out:
+	return ret;
 
 err_size:
 	put_user(sizeof(*attr), &uattr->size);
-	return -E2BIG;
+	ret = -E2BIG;
+	goto out;
 }
 
 /**
@@ -4659,12 +4661,8 @@ SYSCALL_DEFINE3(sched_setattr, pid_t, pid, struct sched_attr __user *, uattr,
 	if (!uattr || pid < 0 || flags)
 		return -EINVAL;
 
-	retval = sched_copy_attr(uattr, &attr);
-	if (retval)
-		return retval;
-
-	if ((int)attr.sched_policy < 0)
-		return -EINVAL;
+	if (sched_copy_attr(uattr, &attr))
+		return -EFAULT;
 
 	rcu_read_lock();
 	retval = -ESRCH;
@@ -4773,7 +4771,7 @@ static int sched_read_attr(struct sched_attr __user *uattr,
 
 		for (; addr < end; addr++) {
 			if (*addr)
-				return -EFBIG;
+				goto err_size;
 		}
 
 		attr->size = usize;
@@ -4783,7 +4781,12 @@ static int sched_read_attr(struct sched_attr __user *uattr,
 	if (ret)
 		return -EFAULT;
 
-	return 0;
+out:
+	return ret;
+
+err_size:
+	ret = -E2BIG;
+	goto out;
 }
 
 /**
