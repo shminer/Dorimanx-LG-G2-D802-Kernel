@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,9 @@
 
 		qcom,chipid = <0x03030000>;
 
+
 		qcom,initial-pwrlevel = <4>;
+		qcom,bus-control;
 		qcom,idle-timeout = <8>; //<HZ/12>
 		qcom,strtstp-sleepwake;
 		qcom,clk-map = <0x0000006>; //KGSL_CLK_CORE | KGSL_CLK_IFACE
@@ -69,21 +71,18 @@
 				reg = <0>;
 				qcom,gpu-freq = <578000000>;
 				qcom,bus-freq = <8>;
-				qcom,io-fraction = <33>;
 			};
 
 			qcom,gpu-pwrlevel@1 {
 				reg = <1>;
 				qcom,gpu-freq = <450000000>;
 				qcom,bus-freq = <7>;
-				qcom,io-fraction = <66>;
 			};
 
 			qcom,gpu-pwrlevel@2 {
 				reg = <2>;
 				qcom,gpu-freq = <389000000>;
 				qcom,bus-freq = <7>;
-				qcom,io-fraction = <66>;
 			};
 
 			qcom,gpu-pwrlevel@3 {
@@ -97,14 +96,12 @@
 				reg = <4>;
 				qcom,gpu-freq = <200000000>;
 				qcom,bus-freq = <2>;
-				qcom,io-fraction = <100>;
 			};
 
 			qcom,gpu-pwrlevel@5 {
 				reg = <5>;
 				qcom,gpu-freq = <27000000>;
 				qcom,bus-freq = <0>;
-				qcom,io-fraction = <0>;
 			};
 		};
 
