@@ -221,6 +221,14 @@ extern void sched_get_nr_running_avg(int *avg, int *iowait_avg);
 extern void calc_global_load(unsigned long ticks);
 extern void update_cpu_load_nohz(void);
 
+/* Notifier for when a task gets migrated to a new CPU */
+struct task_migration_notifier {
+	struct task_struct *task;
+	int from_cpu;
+	int to_cpu;
+};
+extern void register_task_migration_notifier(struct notifier_block *n);
+
 extern unsigned long get_parent_ip(unsigned long addr);
 
 struct seq_file;
@@ -321,6 +329,14 @@ extern char ___assert_task_state[1 - 2*!!(
 
 /* Task command name length */
 #define TASK_COMM_LEN 16
+
+enum task_event {
+	PUT_PREV_TASK   = 0,
+	PICK_NEXT_TASK  = 1,
+	TASK_WAKE       = 2,
+	TASK_MIGRATE    = 3,
+	TASK_UPDATE     = 4,
+};
 
 #include <linux/spinlock.h>
 
@@ -1058,6 +1074,21 @@ struct load_weight {
 	u32 inv_weight;
 };
 
+struct sched_avg {
+	/*
+	 * These sums represent an infinite geometric series and so are bound
+	 * above by 1024/(1-y).  Thus we only need a u32 to store them for for all
+	 * choices of y < 1-2^(-32)*1024.
+	 */
+	u32 runnable_avg_sum, runnable_avg_period;
+#if defined(CONFIG_SCHED_FREQ_INPUT) || defined(CONFIG_SCHED_HMP)
+	u32 runnable_avg_sum_scaled;
+#endif
+	u64 last_runnable_update;
+	s64 decay_count;
+	unsigned long load_avg_contrib;
+};
+
 #ifdef CONFIG_SCHEDSTATS
 struct sched_statistics {
 	u64			wait_start;
@@ -1099,8 +1130,6 @@ struct sched_statistics {
 /* ravg represents frequency scaled cpu-demand of tasks */
 struct ravg {
 	/*
-	 * 'window_start' marks the beginning of new window
-	 *
 	 * 'mark_start' marks the beginning of an event (task waking up, task
 	 * starting to execute, task being preempted) within a window
 	 *
@@ -1114,9 +1143,14 @@ struct ravg {
 	 *
 	 * 'demand' represents maximum sum seen over previous RAVG_HIST_SIZE
 	 * windows. 'demand' could drive frequency demand for tasks.
+	 *
+	 * 'prev_window' is the history in the most recent window. This value
+	 * may be zero if there was no task activity in that window - that is
+	 * how this quantity differs from the most recent sample in
+	 * sum_history (empty windows are ignored in sum_history).
 	 */
-	u64 window_start, mark_start;
-	u32 sum, demand;
+	u64 mark_start;
+	u32 sum, demand, prev_window, partial_demand;
 	u32 sum_history[RAVG_HIST_SIZE];
 };
 
@@ -1144,6 +1178,15 @@ struct sched_entity {
 	/* rq "owned" by this entity/group: */
 	struct cfs_rq		*my_q;
 #endif
+/*
+ * Load-tracking only depends on SMP, FAIR_GROUP_SCHED dependency below may be
+ * removed when useful for applications beyond shares distribution (e.g.
+ * load-balance).
+ */
+#if defined(CONFIG_SMP) && defined(CONFIG_FAIR_GROUP_SCHED)
+	/* Per-entity load-tracking */
+	struct sched_avg	avg;
+#endif
 };
 
 struct sched_rt_entity {
@@ -1151,7 +1194,6 @@ struct sched_rt_entity {
 	unsigned long timeout;
 	unsigned long watchdog_stamp;
 	unsigned int time_slice;
-	int nr_cpus_allowed;
 
 	struct sched_rt_entity *back;
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -1243,11 +1285,13 @@ struct task_struct {
 	const struct sched_class *sched_class;
 	struct sched_entity se;
 	struct sched_rt_entity rt;
+#if defined(CONFIG_SCHED_FREQ_INPUT) || defined(CONFIG_SCHED_HMP)
+	struct ravg ravg;
+#endif
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group *sched_task_group;
 #endif
 	struct sched_dl_entity dl;
-	struct ravg ravg;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	/* list of struct preempt_notifier: */
@@ -1268,6 +1312,7 @@ struct task_struct {
 #endif
 
 	unsigned int policy;
+	int nr_cpus_allowed;
 	cpumask_t cpus_allowed;
 
 #ifdef CONFIG_PREEMPT_RCU
@@ -1780,6 +1825,9 @@ extern void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, 
 
 extern int task_free_register(struct notifier_block *n);
 extern int task_free_unregister(struct notifier_block *n);
+extern int sched_set_window(u64 window_start, unsigned int window_size);
+static inline void sched_set_io_is_busy(int val) {};
+extern unsigned long sched_get_busy(int cpu);
 
 /*
  * Per process flags
@@ -1900,6 +1948,8 @@ extern void do_set_cpus_allowed(struct task_struct *p,
 
 extern int set_cpus_allowed_ptr(struct task_struct *p,
 				const struct cpumask *new_mask);
+extern void sched_set_cpu_cstate(int cpu, int cstate,
+			 int wakeup_energy, int wakeup_latency);
 #else
 static inline void do_set_cpus_allowed(struct task_struct *p,
 				      const struct cpumask *new_mask)
@@ -1911,6 +1961,10 @@ static inline int set_cpus_allowed_ptr(struct task_struct *p,
 	if (!cpumask_test_cpu(0, new_mask))
 		return -EINVAL;
 	return 0;
+}
+static inline void
+sched_set_cpu_cstate(int cpu, int cstate, int wakeup_energy, int wakeup_latency)
+{
 }
 #endif
 
@@ -1929,6 +1983,15 @@ void calc_load_exit_idle(void);
 static inline void calc_load_enter_idle(void) { }
 static inline void calc_load_exit_idle(void) { }
 #endif /* CONFIG_NO_HZ */
+
+#ifdef CONFIG_SCHED_HMP
+extern int sched_set_boost(int enable);
+#else
+static inline int sched_set_boost(int enable)
+{
+	return -EINVAL;
+}
+#endif
 
 #ifndef CONFIG_CPUMASK_OFFSTACK
 static inline int set_cpus_allowed(struct task_struct *p, cpumask_t new_mask)
@@ -1999,7 +2062,7 @@ extern unsigned long long
 task_sched_runtime(struct task_struct *task);
 
 /* sched_exec is called by processes performing an exec */
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP)
 extern void sched_exec(void);
 #else
 #define sched_exec()   {}
@@ -2660,6 +2723,8 @@ struct migration_notify_data {
 #ifdef CONFIG_ANDROID_BG_SCAN_MEM
 extern struct raw_notifier_head bgtsk_migration_notifier_head;
 #endif
+
+extern struct atomic_notifier_head load_alert_notifier_head;
 
 extern long sched_setaffinity(pid_t pid, const struct cpumask *new_mask);
 extern long sched_getaffinity(pid_t pid, struct cpumask *mask);
