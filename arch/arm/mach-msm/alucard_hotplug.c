@@ -30,7 +30,7 @@
 #include <linux/earlysuspend.h>
 #endif  /* CONFIG_POWERSUSPEND || CONFIG_HAS_EARLYSUSPEND */
 
-static struct hotplug_cpuinfo {
+struct hotplug_cpuinfo {
 #ifndef CONFIG_ALUCARD_HOTPLUG_USE_CPU_UTIL
 	u64 prev_cpu_wall;
 	u64 prev_cpu_idle;
@@ -54,18 +54,22 @@ static struct hotplug_tuners {
 	unsigned int min_cpus_online;
 	unsigned int maxcoreslimit;
 	unsigned int maxcoreslimit_sleep;
+	unsigned int hotplug_suspend;
+	unsigned int io_is_busy;
 } hotplug_tuners_ins = {
 	.hotplug_sampling_rate = 60,
 	.hotplug_enable = 0,
 	.min_cpus_online = 1,
 	.maxcoreslimit = NR_CPUS,
 	.maxcoreslimit_sleep = 1,
+	.hotplug_suspend = 0,
+	.io_is_busy = 0,
 };
 
 #define DOWN_INDEX		(0)
 #define UP_INDEX		(1)
 
-static struct runqueue_data {
+struct runqueue_data {
 	unsigned int nr_run_avg;
 	int64_t last_time;
 	int64_t total_time;
@@ -79,8 +83,6 @@ static void init_rq_avg_stats(void)
 	rq_data->nr_run_avg = 0;
 	rq_data->last_time = 0;
 	rq_data->total_time = 0;
-
-	return;
 }
 
 static int __init init_rq_avg(void)
@@ -95,11 +97,9 @@ static int __init init_rq_avg(void)
 	return 0;
 }
 
-static int __exit exit_rq_avg(void)
+static void exit_rq_avg(void)
 {
 	kfree(rq_data);
-
-	return 0;
 }
 
 static unsigned int get_nr_run_avg(void)
@@ -166,7 +166,7 @@ static unsigned int hotplug_rate[NR_CPUS][2] = {
 	{4, 1}
 };
 
-static void __cpuinit hotplug_work_fn(struct work_struct *work)
+static void __ref hotplug_work_fn(struct work_struct *work)
 {
 	int upmaxcoreslimit = 0;
 	unsigned int min_cpus_online = hotplug_tuners_ins.min_cpus_online;
@@ -183,6 +183,7 @@ static void __cpuinit hotplug_work_fn(struct work_struct *work)
 		{false, false}
 	};
 	int delay;
+	int io_busy = hotplug_tuners_ins.io_is_busy;
 
 	rq_avg = get_nr_run_avg();
 
@@ -215,7 +216,7 @@ static void __cpuinit hotplug_work_fn(struct work_struct *work)
 #ifdef CONFIG_ALUCARD_HOTPLUG_USE_CPU_UTIL
 		cur_load = cpufreq_quick_get_util(cpu);
 #else
-		cur_idle_time = get_cpu_idle_time(cpu, &cur_wall_time, 0);
+		cur_idle_time = get_cpu_idle_time(cpu, &cur_wall_time, io_busy);
 
 		wall_time = (unsigned int)
 				(cur_wall_time -
@@ -322,21 +323,27 @@ static void __ref alucard_hotplug_suspend(struct power_suspend *handler)
 static void __ref alucard_hotplug_early_suspend(struct early_suspend *handler)
 #endif
 {
-	if (hotplug_tuners_ins.hotplug_enable > 0)
-		suspended = true;
+	if ((hotplug_tuners_ins.hotplug_enable > 0) &&
+			hotplug_tuners_ins.hotplug_suspend == 1) {
+		if (suspended == false)
+			suspended = true;
+	}
 }
 
 #ifdef CONFIG_POWERSUSPEND
-static void __cpuinit alucard_hotplug_resume(struct power_suspend *handler)
+static void __ref alucard_hotplug_resume(struct power_suspend *handler)
 #else
-static void __cpuinit alucard_hotplug_late_resume(
+static void __ref alucard_hotplug_late_resume(
 				struct early_suspend *handler)
 #endif
 {
-	if (hotplug_tuners_ins.hotplug_enable > 0) {
-		/* wake up everyone */
-		suspended = false;
-		force_cpu_up = true;
+	if ((hotplug_tuners_ins.hotplug_enable > 0) &&
+			hotplug_tuners_ins.hotplug_suspend == 1) {
+		if (suspended == true) {
+			/* wake up everyone */
+			suspended = false;
+			force_cpu_up = true;
+		}
 	}
 }
 
@@ -381,14 +388,14 @@ static int hotplug_start(void)
 
 #ifndef CONFIG_ALUCARD_HOTPLUG_USE_CPU_UTIL
 		pcpu_info->prev_cpu_idle = get_cpu_idle_time(cpu,
-				&pcpu_info->prev_cpu_wall, 0);
+				&pcpu_info->prev_cpu_wall, hotplug_tuners_ins.io_is_busy);
 #endif
 		pcpu_info->cpu_up_rate = 1;
 		pcpu_info->cpu_down_rate = 1;
 	}
 	put_online_cpus();
 
-	init_rq_avg_stats;
+	init_rq_avg_stats();
 	INIT_DELAYED_WORK(&alucard_hotplug_work, hotplug_work_fn);
 	queue_delayed_work_on(0, alucardhp_wq, &alucard_hotplug_work,
 						msecs_to_jiffies(hotplug_tuners_ins.hotplug_sampling_rate));
@@ -412,7 +419,7 @@ static void hotplug_stop(void)
 
 	cancel_delayed_work_sync(&alucard_hotplug_work);
 
-	exit_rq_avg;
+	exit_rq_avg();
 
 	destroy_workqueue(alucardhp_wq);
 }
@@ -430,6 +437,8 @@ show_one(hotplug_enable, hotplug_enable);
 show_one(min_cpus_online, min_cpus_online);
 show_one(maxcoreslimit, maxcoreslimit);
 show_one(maxcoreslimit_sleep, maxcoreslimit_sleep);
+show_one(hotplug_suspend, hotplug_suspend);
+show_one(io_is_busy, io_is_busy);
 
 #define show_hotplug_param(file_name, num_core, up_down)		\
 static ssize_t show_##file_name##_##num_core##_##up_down		\
@@ -692,11 +701,73 @@ static ssize_t store_maxcoreslimit_sleep(struct kobject *a,
 	return count;
 }
 
+/*
+ * hotplug_suspend control
+ * if set = 1 hotplug will sleep,
+ * if set = 0, then hoplug will be active all the time.
+ */
+static ssize_t store_hotplug_suspend(struct kobject *a,
+				struct attribute *b,
+				const char *buf, size_t count)
+{
+	int input;
+	int ret;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+
+	input = input > 0;
+
+	if (hotplug_tuners_ins.hotplug_suspend == input)
+		return count;
+
+	if (input > 0)
+		hotplug_tuners_ins.hotplug_suspend = 1;
+	else
+		hotplug_tuners_ins.hotplug_suspend = 0;
+
+	return count;
+}
+
+/* io_is_busy */
+static ssize_t store_io_is_busy(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input, j;
+	int ret;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+
+	if (input > 1)
+		input = 1;
+
+	if (input == hotplug_tuners_ins.io_is_busy)
+		return count;
+
+	hotplug_tuners_ins.io_is_busy = !!input;
+#ifndef CONFIG_ALUCARD_HOTPLUG_USE_CPU_UTIL
+	/* we need to re-evaluate prev_cpu_idle */
+	if (hotplug_tuners_ins.hotplug_enable > 0) {
+		for_each_online_cpu(j) {
+			struct hotplug_cpuinfo *pcpu_info = &per_cpu(od_hotplug_cpuinfo, j);
+			pcpu_info->prev_cpu_idle = get_cpu_idle_time(j,
+					&pcpu_info->prev_cpu_wall, hotplug_tuners_ins.io_is_busy);
+		}
+	}
+#endif
+	return count;
+}
+
 define_one_global_rw(hotplug_sampling_rate);
 define_one_global_rw(hotplug_enable);
 define_one_global_rw(min_cpus_online);
 define_one_global_rw(maxcoreslimit);
 define_one_global_rw(maxcoreslimit_sleep);
+define_one_global_rw(hotplug_suspend);
+define_one_global_rw(io_is_busy);
 
 static struct attribute *alucard_hotplug_attributes[] = {
 	&hotplug_sampling_rate.attr,
@@ -736,6 +807,8 @@ static struct attribute *alucard_hotplug_attributes[] = {
 	&min_cpus_online.attr,
 	&maxcoreslimit.attr,
 	&maxcoreslimit_sleep.attr,
+	&hotplug_suspend.attr,
+	&io_is_busy.attr,
 	NULL
 };
 
@@ -761,17 +834,13 @@ static int __init alucard_hotplug_init(void)
 	return ret;
 }
 
-static int __exit alucard_hotplug_exit(void)
+static void __exit alucard_hotplug_exit(void)
 {
-	int ret;
-
 	if (hotplug_tuners_ins.hotplug_enable > 0) {
 		hotplug_stop();
 	}
 
 	sysfs_remove_group(kernel_kobj, &alucard_hotplug_attr_group);
-
-	return ret;
 }
 MODULE_AUTHOR("Alucard_24@XDA");
 MODULE_DESCRIPTION("'alucard_hotplug' - A cpu hotplug driver for "
@@ -779,4 +848,3 @@ MODULE_DESCRIPTION("'alucard_hotplug' - A cpu hotplug driver for "
 MODULE_LICENSE("GPL");
 
 late_initcall(alucard_hotplug_init);
-late_initexit(alucard_hotplug_exit);

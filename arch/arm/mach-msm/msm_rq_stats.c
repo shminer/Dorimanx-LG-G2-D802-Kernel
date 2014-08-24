@@ -49,7 +49,6 @@ struct cpu_load_data {
 	u64 prev_cpu_wall;
 #endif
 	unsigned int avg_load_maxfreq;
-	unsigned int cur_load_maxfreq;
 	unsigned int samples;
 	unsigned int window_size;
 	unsigned int cur_freq;
@@ -63,12 +62,14 @@ static unsigned int lock_hotplug_disabled;
 static DEFINE_PER_CPU(struct cpu_load_data, cpuload);
 
 #ifndef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
-static bool io_is_busy = false;
+static int io_is_busy = 0;
 #endif
+
+static unsigned int hotplug_suspend = 0;
 
 static int update_average_load(unsigned int freq, unsigned int cpu)
 {
-	int ret;
+	struct cpu_load_data *pcpu = &per_cpu(cpuload, cpu);
 #ifdef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
 	u64 cur_wall_time;
 	unsigned int wall_time;
@@ -77,12 +78,6 @@ static int update_average_load(unsigned int freq, unsigned int cpu)
 	unsigned int idle_time, wall_time;
 #endif
 	unsigned int cur_load, load_at_max_freq;
-	struct cpu_load_data *pcpu = &per_cpu(cpuload, cpu);
-	struct cpufreq_policy policy;
-
-        ret = cpufreq_get_policy(&policy, cpu);
-        if (ret)
-                return -EINVAL;
 
 #ifdef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
 	cur_wall_time = ktime_to_us(ktime_get());
@@ -106,7 +101,7 @@ static int update_average_load(unsigned int freq, unsigned int cpu)
 #endif
 
 	/* Calculate the scaled load across CPU */
-	load_at_max_freq = (cur_load * freq) / policy.max;
+	load_at_max_freq = (cur_load * freq) / pcpu->policy_max;
 
 	if (!pcpu->avg_load_maxfreq) {
 		/* This is the first sample in this window*/
@@ -140,7 +135,6 @@ static unsigned int report_load_at_max_freq(void)
 		mutex_lock(&pcpu->cpu_load_mutex);
 		update_average_load(pcpu->cur_freq, cpu);
 		total_load += pcpu->avg_load_maxfreq;
-		pcpu->cur_load_maxfreq = pcpu->avg_load_maxfreq;
 		pcpu->avg_load_maxfreq = 0;
 		mutex_unlock(&pcpu->cpu_load_mutex);
 	}
@@ -194,19 +188,20 @@ static int cpu_hotplug_handler(struct notifier_block *nb,
 static int system_suspend_handler(struct notifier_block *nb,
 				unsigned long val, void *data)
 {
-	if (rq_info.hotplug_disabled)
+	if (lock_hotplug_disabled)
 		return NOTIFY_OK;
 
 	switch (val) {
 	case PM_POST_HIBERNATION:
 	case PM_POST_SUSPEND:
 	case PM_POST_RESTORE:
-		if (!lock_hotplug_disabled)
+		if (hotplug_suspend == 1
+				|| rq_info.hotplug_disabled == 1)
 			rq_info.hotplug_disabled = 0;
 		break;
 	case PM_HIBERNATION_PREPARE:
 	case PM_SUSPEND_PREPARE:
-		if (!lock_hotplug_disabled)
+		if (hotplug_suspend == 1)
 			rq_info.hotplug_disabled = 1;
 		break;
 	default:
@@ -239,11 +234,31 @@ static ssize_t store_hotplug_disable(struct kobject *kobj,
 	int ret;
 	unsigned int val;
 	unsigned long flags = 0;
+#ifndef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
+	unsigned int i;
+#endif
 
 	spin_lock_irqsave(&rq_lock, flags);
 	ret = sscanf(buf, "%u", &val);
 	if (ret != 1 || val < 0 || val > 1)
 		return -EINVAL;
+
+	if (val == rq_info.hotplug_disabled) {
+		spin_unlock_irqrestore(&rq_lock, flags);
+		return count;
+	}
+
+#ifndef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
+	if (!val) {
+		for_each_possible_cpu(i) {
+			struct cpu_load_data *pcpu = &per_cpu(cpuload, i);
+			mutex_lock(&pcpu->cpu_load_mutex);
+			pcpu->prev_cpu_idle = get_cpu_idle_time(i,
+				&pcpu->prev_cpu_wall, io_is_busy);
+			mutex_unlock(&pcpu->cpu_load_mutex);
+		}
+	}
+#endif
 
 	rq_info.hotplug_disabled = val;
 	lock_hotplug_disabled = val;
@@ -261,6 +276,77 @@ static ssize_t show_hotplug_disable(struct kobject *kobj,
 static struct kobj_attribute hotplug_disabled_attr =
 	__ATTR(hotplug_disable, S_IWUSR | S_IRUSR, show_hotplug_disable,
 	       store_hotplug_disable);
+
+#ifndef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
+static ssize_t store_io_is_busy(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	int ret;
+	unsigned int val;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &val);
+	if (ret != 1 || val < 0 || val > 1)
+		return -EINVAL;
+
+	if (val == io_is_busy)
+		return count;
+
+	io_is_busy = !!val;
+
+	if (!lock_hotplug_disabled) {
+		for_each_possible_cpu(i) {
+			struct cpu_load_data *pcpu = &per_cpu(cpuload, i);
+			mutex_lock(&pcpu->cpu_load_mutex);
+			pcpu->prev_cpu_idle = get_cpu_idle_time(i,
+				&pcpu->prev_cpu_wall, io_is_busy);
+			mutex_unlock(&pcpu->cpu_load_mutex);
+		}
+	}
+
+	return count;
+}
+static ssize_t show_io_is_busy(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", io_is_busy);
+}
+
+static struct kobj_attribute io_is_busy_attr =
+	__ATTR(io_is_busy, S_IWUSR | S_IRUSR, show_io_is_busy,
+	       store_io_is_busy);
+#endif
+
+static ssize_t store_hotplug_suspend(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	int ret;
+	unsigned int val;
+
+	ret = sscanf(buf, "%u", &val);
+	if (ret != 1)
+		return -EINVAL;
+
+	val = (val > 0);
+
+	if (val == hotplug_suspend)
+		return count;
+
+	hotplug_suspend = val;
+
+	return count;
+}
+static ssize_t show_hotplug_suspend(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", hotplug_suspend);
+}
+
+static struct kobj_attribute hotplug_suspend_attr =
+	__ATTR(hotplug_suspend, S_IWUSR | S_IRUSR, show_hotplug_suspend,
+	       store_hotplug_suspend);
 
 static void def_work_fn(struct work_struct *work)
 {
@@ -362,8 +448,8 @@ static ssize_t show_cpu_normalized_load(struct kobject *kobj,
 }
 
 static struct kobj_attribute cpu_normalized_load_attr =
-	__ATTR(cpu_normalized_load, S_IWUSR | S_IRUSR, show_cpu_normalized_load,
-			NULL);
+	__ATTR(cpu_normalized_load, S_IWUSR | S_IRUSR,
+			show_cpu_normalized_load, NULL);
 
 static struct attribute *rq_attrs[] = {
 	&cpu_normalized_load_attr.attr,
@@ -371,6 +457,10 @@ static struct attribute *rq_attrs[] = {
 	&run_queue_avg_attr.attr,
 	&run_queue_poll_ms_attr.attr,
 	&hotplug_disabled_attr.attr,
+#ifndef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
+	&io_is_busy_attr.attr,
+#endif
+	&hotplug_suspend_attr.attr,
 	NULL,
 };
 
@@ -429,7 +519,7 @@ static int __init msm_rq_stats_init(void)
 		struct cpu_load_data *pcpu = &per_cpu(cpuload, i);
 		mutex_init(&pcpu->cpu_load_mutex);
 		cpufreq_get_policy(&cpu_policy, i);
-		pcpu->policy_max = cpu_policy.max;
+		pcpu->policy_max = cpu_policy.cpuinfo.max_freq;
 		if (cpu_online(i))
 			pcpu->cur_freq = cpu_policy.cur;
 #ifdef CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL
