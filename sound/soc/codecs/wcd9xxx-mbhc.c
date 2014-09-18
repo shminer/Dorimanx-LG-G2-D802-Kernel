@@ -5031,9 +5031,12 @@ int wcd9xxx_mbhc_init(struct wcd9xxx_mbhc *mbhc, struct wcd9xxx_resmgr *resmgr,
 	core_res = mbhc->resmgr->core_res;
 
 #ifdef CONFIG_MACH_LGE
-if (!mbhc_enabled)
-	goto skip;
+	if (!mbhc_enabled)
+		goto skip_lg;
 #endif
+	if (is_mbhc_disabled())
+		goto skip;
+
 	ret = wcd9xxx_request_irq(core_res, mbhc->intr_ids->insertion,
 				  wcd9xxx_hs_insert_irq,
 				  "Headset insert detect", mbhc);
@@ -5071,6 +5074,7 @@ if (!mbhc_enabled)
 		goto err_release_irq;
 	}
 
+skip :
 	ret = wcd9xxx_request_irq(core_res, mbhc->intr_ids->hph_left_ocp,
 				  wcd9xxx_hphl_ocp_irq, "HPH_L OCP detect",
 				  mbhc);
@@ -5095,7 +5099,7 @@ if (!mbhc_enabled)
 					     1 << WCD9XXX_COND_HPH);
 
 #ifdef CONFIG_MACH_LGE
-skip:
+skip_lg:
 #endif
 
 	pr_debug("%s: leave ret %d\n", __func__, ret);
