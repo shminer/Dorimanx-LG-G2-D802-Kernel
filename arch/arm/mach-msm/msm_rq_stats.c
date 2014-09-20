@@ -57,11 +57,6 @@ struct cpu_load_data {
 	struct mutex cpu_load_mutex;
 };
 
-#if !defined(CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL) && \
-        !defined(CONFIG_MSM_RUN_QUEUE_STATS_BE_CONSERVATIVE)
-static unsigned int lock_hotplug_disabled;
-#endif
-
 static DEFINE_PER_CPU(struct cpu_load_data, cpuload);
 
 #if !defined(CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL) && \
@@ -222,6 +217,7 @@ static int cpu_hotplug_handler(struct notifier_block *nb,
 	return NOTIFY_OK;
 }
 
+#if 0 /* disabled as it's will brake mpdecision */
 static int system_suspend_handler(struct notifier_block *nb,
 				unsigned long val, void *data)
 {
@@ -243,6 +239,7 @@ static int system_suspend_handler(struct notifier_block *nb,
 	}
 	return NOTIFY_OK;
 }
+#endif
 
 static int freq_policy_handler(struct notifier_block *nb,
 			unsigned long event, void *data)
@@ -303,19 +300,10 @@ static ssize_t store_hotplug_enable(struct kobject *kobj,
 #endif
 
 	rq_info.hotplug_enabled = val;
-	if (rq_info.hotplug_enabled) {
+	if (rq_info.hotplug_enabled)
 		rq_info.hotplug_disabled = 0;
-#if !defined(CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL) && \
-        !defined(CONFIG_MSM_RUN_QUEUE_STATS_BE_CONSERVATIVE)
-		lock_hotplug_disabled = 0;
-#endif
-	} else {
+	else
 		rq_info.hotplug_disabled = 1;
-#if !defined(CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL) && \
-        !defined(CONFIG_MSM_RUN_QUEUE_STATS_BE_CONSERVATIVE)
-		lock_hotplug_disabled = 1;
-#endif
-	}
 
 	spin_unlock_irqrestore(&rq_lock, flags);
 
@@ -353,7 +341,7 @@ static ssize_t store_io_is_busy(struct kobject *kobj,
 
 	io_is_busy = !!val;
 
-	if (!lock_hotplug_disabled) {
+	if (rq_info.hotplug_enabled) {
 		for_each_possible_cpu(i) {
 			struct cpu_load_data *pcpu = &per_cpu(cpuload, i);
 			mutex_lock(&pcpu->cpu_load_mutex);
@@ -543,12 +531,8 @@ static int __init msm_rq_stats_init(void)
 	rq_info.def_timer_jiffies = DEFAULT_DEF_TIMER_JIFFIES;
 	rq_info.rq_poll_last_jiffy = 0;
 	rq_info.def_timer_last_jiffy = 0;
-	rq_info.hotplug_disabled = 0;
-	rq_info.hotplug_enabled = 1;
-#if !defined(CONFIG_MSM_RUN_QUEUE_STATS_USE_CPU_UTIL) && \
-        !defined(CONFIG_MSM_RUN_QUEUE_STATS_BE_CONSERVATIVE)
-	lock_hotplug_disabled = 0;
-#endif
+	rq_info.hotplug_disabled = 1;
+	rq_info.hotplug_enabled = 0;
 	ret = init_rq_attribs();
 
 	rq_info.init = 1;
@@ -586,7 +570,9 @@ static int __init msm_rq_stats_early_init(void)
 		return -ENOSYS;
 	}
 
+#if 0 /* disabled */
 	pm_notifier(system_suspend_handler, 0);
+#endif
 	return 0;
 }
 core_initcall(msm_rq_stats_early_init);
