@@ -69,7 +69,7 @@ static ssize_t pm_async_store(struct kobject *kobj, struct kobj_attribute *attr,
 {
 	unsigned long val;
 
-	if (strict_strtoul(buf, 10, &val))
+	if (kstrtoul(buf, 10, &val))
 		return -EINVAL;
 
 	if (val > 1)
@@ -319,6 +319,47 @@ late_initcall(pm_debugfs_init);
 #endif /* CONFIG_DEBUG_FS */
 
 #endif /* CONFIG_PM_SLEEP */
+
+#ifdef CONFIG_PM_SLEEP_DEBUG
+/*
+ * pm_print_times: print time taken by devices to suspend and resume.
+ *
+ * show() returns whether printing of suspend and resume times is enabled.
+ * store() accepts 0 or 1.  0 disables printing and 1 enables it.
+ */
+bool pm_print_times_enabled;
+
+static ssize_t pm_print_times_show(struct kobject *kobj,
+				   struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", pm_print_times_enabled);
+}
+
+static ssize_t pm_print_times_store(struct kobject *kobj,
+				    struct kobj_attribute *attr,
+				    const char *buf, size_t n)
+{
+	unsigned long val;
+
+	if (kstrtoul(buf, 10, &val))
+		return -EINVAL;
+
+	if (val > 1)
+		return -EINVAL;
+
+	pm_print_times_enabled = !!val;
+	return n;
+}
+
+power_attr(pm_print_times);
+
+static inline void pm_print_times_init(void)
+{
+	pm_print_times_enabled = !!initcall_debug;
+}
+#else /* !CONFIG_PP_SLEEP_DEBUG */
+static inline void pm_print_times_init(void) {}
+#endif /* CONFIG_PM_SLEEP_DEBUG */
 
 struct kobject *power_kobj;
 
@@ -607,6 +648,30 @@ power_attr(wake_lock);
 power_attr(wake_unlock);
 #endif
 
+#ifdef CONFIG_FREEZER
+static ssize_t pm_freeze_timeout_show(struct kobject *kobj,
+				      struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", freeze_timeout_msecs);
+}
+
+static ssize_t pm_freeze_timeout_store(struct kobject *kobj,
+				       struct kobj_attribute *attr,
+				       const char *buf, size_t n)
+{
+	unsigned long val;
+
+	if (kstrtoul(buf, 10, &val))
+		return -EINVAL;
+
+	freeze_timeout_msecs = val;
+	return n;
+}
+
+power_attr(pm_freeze_timeout);
+
+#endif	/* CONFIG_FREEZER*/
+
 static struct attribute *g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
@@ -628,10 +693,16 @@ static struct attribute *g[] = {
 #ifdef CONFIG_PM_DEBUG
 	&pm_test_attr.attr,
 #endif
+#ifdef CONFIG_PM_SLEEP_DEBUG
+	&pm_print_times_attr.attr,
+#endif
 #ifdef CONFIG_USER_WAKELOCK
 	&wake_lock_attr.attr,
 	&wake_unlock_attr.attr,
 #endif
+#endif
+#ifdef CONFIG_FREEZER
+	&pm_freeze_timeout_attr.attr,
 #endif
 	NULL,
 };
@@ -673,6 +744,7 @@ static int __init pm_init(void)
 	error = sysfs_create_group(power_kobj, &attr_group);
 	if (error)
 		return error;
+	pm_print_times_init();
 	return pm_autosleep_init();
 }
 
