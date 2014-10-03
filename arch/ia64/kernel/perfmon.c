@@ -2312,7 +2312,7 @@ pfm_smpl_buffer_alloc(struct task_struct *task, struct file *filp, pfm_context_t
 	 * partially initialize the vma for the sampling buffer
 	 */
 	vma->vm_mm	     = mm;
-	vma->vm_file	     = filp;
+	vma->vm_file	     = get_file(filp);
 	vma->vm_flags	     = VM_READ| VM_MAYREAD |VM_RESERVED;
 	vma->vm_page_prot    = PAGE_READONLY; /* XXX may need to change */
 
@@ -2350,8 +2350,6 @@ pfm_smpl_buffer_alloc(struct task_struct *task, struct file *filp, pfm_context_t
 		up_write(&task->mm->mmap_sem);
 		goto error;
 	}
-
-	get_file(filp);
 
 	/*
 	 * now insert the vma in the vm list for the process, must be
@@ -4798,6 +4796,7 @@ sys_perfmonctl (int fd, int cmd, void __user *arg, int count)
 	int narg, completed_args = 0, call_made = 0, cmd_flags;
 	int (*func)(pfm_context_t *ctx, void *arg, int count, struct pt_regs *regs);
 	int (*getsize)(void *arg, size_t *sz);
+	int fput_needed;
 #define PFM_MAX_ARGSIZE	4096
 
 	/*
@@ -4886,7 +4885,7 @@ restart_args:
 
 	ret = -EBADF;
 
-	file = fget(fd);
+	file = fget_light(fd, &fput_needed);
 	if (unlikely(file == NULL)) {
 		DPRINT(("invalid fd %d\n", fd));
 		goto error_args;
@@ -4927,7 +4926,7 @@ abort_locked:
 
 error_args:
 	if (file)
-		fput(file);
+		fput_light(file, fput_needed);
 
 	kfree(args_k);
 
