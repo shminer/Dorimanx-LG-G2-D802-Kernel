@@ -54,9 +54,10 @@
 #endif
 
 /*
- * debug = 1 will print all
- * debug = 2 will print suspend/resume only
- * debug = 3 will print suspend/resume and fast lane boost
+ * debug = 1 will print info with dprintk.
+ * debug = 2 will print suspend/resume only.
+ * debug = 3 will print suspend/resume and fast lane boost.
+ * debug = 4 will print suspend/resume and hotplug work delay for debug.
  */
 static unsigned int debug = 2;
 module_param_named(debug_mask, debug, uint, 0644);
@@ -456,6 +457,9 @@ static void reschedule_hotplug_work(void)
 	delay = load_to_update_rate(stats.cur_avg_load);
 	queue_delayed_work_on(0, hotplug_wq, &hotplug_work,
 			      msecs_to_jiffies(delay));
+	if (debug == 4)
+		pr_info("%s: reschedule_hotplug delay %u\n",
+				MSM_HOTPLUG, delay);
 }
 
 static void msm_hotplug_work(struct work_struct *work)
@@ -524,27 +528,19 @@ reschedule:
 	defined(CONFIG_HAS_EARLYSUSPEND)
 static void msm_hotplug_suspend(struct work_struct *work)
 {
-	int cpu;
-
 	if (!hotplug.suspended) {
 		mutex_lock(&hotplug.msm_hotplug_mutex);
 		hotplug.suspended = 1;
 		hotplug.min_cpus_online_res = hotplug.min_cpus_online;
 		hotplug.min_cpus_online = 1;
 		hotplug.max_cpus_online_res = hotplug.max_cpus_online;
-		hotplug.max_cpus_online = 4;
+		hotplug.max_cpus_online = 2;
 		mutex_unlock(&hotplug.msm_hotplug_mutex);
 
 		/* Flush hotplug workqueue */
 		flush_workqueue(hotplug_wq);
 		cancel_delayed_work_sync(&hotplug_work);
 
-		/* Put all sibling cores to sleep */
-		for_each_online_cpu(cpu) {
-			if (cpu == 0)
-				continue;
-			cpu_down(cpu);
-		}
 		if (debug >= 2)
 			dprintk("%s: suspended.\n", MSM_HOTPLUG);
 	}
@@ -568,11 +564,7 @@ static void __ref msm_hotplug_resume(struct work_struct *work)
 			dprintk("%s: resumed.\n", MSM_HOTPLUG);
 	}
 
-#if defined(CONFIG_LCD_NOTIFY) || defined(CONFIG_MACH_LGE)
-	if (wakeup_boost || required_wakeup) {
-#else
 	if (required_wakeup) {
-#endif
 		/* Fire up all CPUs */
 		for_each_cpu_not(cpu, cpu_online_mask) {
 			if (cpu == 0)
@@ -615,26 +607,21 @@ static void __ref __msm_hotplug_resume(struct power_suspend *handler)
 static void __ref __msm_hotplug_resume(struct early_suspend *handler)
 #endif
 {
-#if defined(CONFIG_LCD_NOTIFY) || defined(CONFIG_MACH_LGE)
 	int cpu;
-#endif
 
 	if (!hotplug.msm_enabled)
 		return;
 
 	if (!hotplug_suspend) {
-#if defined(CONFIG_LCD_NOTIFY) || defined(CONFIG_MACH_LGE)
-		if (wakeup_boost) {
-			/* Fire up all CPUs */
-			for_each_cpu_not(cpu, cpu_online_mask) {
-				if (cpu == 0)
-					continue;
-				cpu_up(cpu);
-				apply_down_lock(cpu);
-			}
-			dprintk("%s: wakeup boosted.\n", MSM_HOTPLUG);
+		/* Fire up all CPUs */
+		for_each_cpu_not(cpu, cpu_online_mask) {
+			if (cpu == 0)
+				continue;
+			cpu_up(cpu);
+			apply_down_lock(cpu);
 		}
-#endif
+		dprintk("%s: wakeup boosted.\n", MSM_HOTPLUG);
+
 		return;
 	}
 
