@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1291,6 +1291,9 @@ static int mdss_mdp_overlay_queue(struct msm_fb_data_type *mfd,
 
 	flags = (pipe->flags & MDP_SECURE_OVERLAY_SESSION);
 	flags |= (pipe->flags & MDP_SECURE_DISPLAY_OVERLAY_SESSION);
+
+	if (!mfd->panel_info->cont_splash_enabled)
+		mdss_iommu_attach(mdata);
 
 	src_data = &pipe->back_buf;
 	if (src_data->num_planes) {

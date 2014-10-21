@@ -455,7 +455,15 @@ static void __hrtick_start(void *arg)
 void hrtick_start(struct rq *rq, u64 delay)
 {
 	struct hrtimer *timer = &rq->hrtick_timer;
-	ktime_t time = ktime_add_ns(timer->base->get_time(), delay);
+	ktime_t time;
+	s64 delta;
+
+	/*
+	 * Don't schedule slices shorter than 10000ns, that just
+	 * doesn't make sense and can cause timer DoS.
+	 */
+	delta = max_t(s64, delay, 10000LL);
+	time = ktime_add_ns(timer->base->get_time(), delta);
 
 	hrtimer_set_expires(timer, time);
 
@@ -2708,6 +2716,8 @@ unsigned long to_ratio(u64 period, u64 runtime)
 #ifdef CONFIG_SMP
 inline struct dl_bw *dl_bw_of(int i)
 {
+	rcu_lockdep_assert(rcu_read_lock_sched_held(),
+			   "sched RCU must be held");
 	return &cpu_rq(i)->rd->dl_bw;
 }
 
@@ -2716,6 +2726,8 @@ static inline int dl_bw_cpus(int i)
 	struct root_domain *rd = cpu_rq(i)->rd;
 	int cpus = 0;
 
+	rcu_lockdep_assert(rcu_read_lock_sched_held(),
+			   "sched RCU must be held");
 	for_each_cpu_and(i, rd->span, cpu_active_mask)
 		cpus++;
 
@@ -5690,11 +5702,11 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	}
 	retval = -EPERM;
 	if (!check_same_owner(p) && !ns_capable(task_user_ns(p), CAP_SYS_NICE))
-		goto out_unlock;
+		goto out_free_new_mask;
 
 	retval = security_task_setscheduler(p);
 	if (retval)
-		goto out_unlock;
+		goto out_free_new_mask;
 
 
 	cpuset_cpus_allowed(p, cpus_allowed);
@@ -5707,13 +5719,14 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	 * root_domain.
 	 */
 #ifdef CONFIG_SMP
-	if (task_has_dl_policy(p)) {
-		const struct cpumask *span = task_rq(p)->rd->span;
-
-		if (dl_bandwidth_enabled() && !cpumask_subset(span, new_mask)) {
+	if (task_has_dl_policy(p) && dl_bandwidth_enabled()) {
+		rcu_read_lock();
+		if (!cpumask_subset(task_rq(p)->rd->span, new_mask)) {
 			retval = -EBUSY;
-			goto out_unlock;
+			rcu_read_unlock();
+			goto out_free_new_mask;
 		}
+		rcu_read_unlock();
 	}
 #endif
 again:
@@ -5731,7 +5744,7 @@ again:
 			goto again;
 		}
 	}
-out_unlock:
+out_free_new_mask:
 	free_cpumask_var(new_mask);
 out_free_cpus_allowed:
 	free_cpumask_var(cpus_allowed);
@@ -6862,6 +6875,7 @@ static int __cpuinit sched_cpu_inactive(struct notifier_block *nfb,
 {
 	unsigned long flags;
 	long cpu = (long)hcpu;
+	struct dl_bw *dl_b;
 
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_DOWN_PREPARE:
@@ -6869,14 +6883,18 @@ static int __cpuinit sched_cpu_inactive(struct notifier_block *nfb,
 
 		/* explicitly allow suspend */
 		if (!(action & CPU_TASKS_FROZEN)) {
-			struct dl_bw *dl_b = dl_bw_of(cpu);
 			bool overflow;
 			int cpus;
+
+			rcu_read_lock_sched();
+			dl_b = dl_bw_of(cpu);
 
 			raw_spin_lock_irqsave(&dl_b->lock, flags);
 			cpus = dl_bw_cpus(cpu);
 			overflow = __dl_overflow(dl_b, cpus, 0, 0);
 			raw_spin_unlock_irqrestore(&dl_b->lock, flags);
+
+			rcu_read_unlock_sched();
 
 			if (overflow)
 				return notifier_from_errno(-EBUSY);
@@ -8998,6 +9016,7 @@ static int sched_dl_global_constraints(void)
 	u64 runtime = global_rt_runtime();
 	u64 period = global_rt_period();
 	u64 new_bw = to_ratio(period, runtime);
+	struct dl_bw *dl_b;
 	int cpu, ret = 0;
 	unsigned long flags;
 
@@ -9011,12 +9030,15 @@ static int sched_dl_global_constraints(void)
 	 * solutions is welcome!
 	 */
 	for_each_possible_cpu(cpu) {
-		struct dl_bw *dl_b = dl_bw_of(cpu);
+		rcu_read_lock_sched();
+		dl_b = dl_bw_of(cpu);
 
 		raw_spin_lock_irqsave(&dl_b->lock, flags);
 		if (new_bw < dl_b->total_bw)
 			ret = -EBUSY;
 		raw_spin_unlock_irqrestore(&dl_b->lock, flags);
+
+		rcu_read_unlock_sched();
 
 		if (ret)
 			break;
@@ -9028,6 +9050,7 @@ static int sched_dl_global_constraints(void)
 static void sched_dl_do_global(void)
 {
 	u64 new_bw = -1;
+	struct dl_bw *dl_b;
 	int cpu;
 	unsigned long flags;
 
@@ -9041,11 +9064,14 @@ static void sched_dl_do_global(void)
 	 * FIXME: As above...
 	 */
 	for_each_possible_cpu(cpu) {
-		struct dl_bw *dl_b = dl_bw_of(cpu);
+		rcu_read_lock_sched();
+		dl_b = dl_bw_of(cpu);
 
 		raw_spin_lock_irqsave(&dl_b->lock, flags);
 		dl_b->bw = new_bw;
 		raw_spin_unlock_irqrestore(&dl_b->lock, flags);
+
+		rcu_read_unlock_sched();
 	}
 }
 

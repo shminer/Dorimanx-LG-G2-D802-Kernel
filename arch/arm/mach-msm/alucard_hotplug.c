@@ -57,7 +57,7 @@ static struct hotplug_tuners {
 	unsigned int hotplug_suspend;
 	unsigned int io_is_busy;
 } hotplug_tuners_ins = {
-	.hotplug_sampling_rate = 60,
+	.hotplug_sampling_rate = 30,
 	.hotplug_enable = 0,
 	.min_cpus_online = 1,
 	.maxcoreslimit = NR_CPUS,
@@ -141,28 +141,28 @@ static unsigned int get_nr_run_avg(void)
 }
 
 static unsigned int hotplug_freq[NR_CPUS][2] = {
-	{0, 1267200},
-	{960000, 1497600},
-	{1036800, 1728000},
-	{1190400, 0}
+	{0, 1497600},
+	{652800, 1190400},
+	{652800, 1190400},
+	{652800, 0}
 };
 static int hotplug_load[NR_CPUS][2] = {
-	{0, 60},
-	{30, 65},
-	{30, 65},
+	{0, 65},
+	{50, 60},
+	{30, 60},
 	{30, 0}
 };
 static unsigned int hotplug_rq[NR_CPUS][2] = {
-	{0, 100},
-	{100, 200},
-	{200, 300},
-	{300, 0}
+	{0, 200},
+	{300, 100},
+	{200, 100},
+	{200, 0}
 };
 
 static unsigned int hotplug_rate[NR_CPUS][2] = {
 	{1, 1},
-	{4, 2},
-	{4, 2},
+	{4, 1},
+	{4, 1},
 	{4, 1}
 };
 
@@ -254,6 +254,11 @@ static void __ref hotplug_work_fn(struct work_struct *work)
 			check_up = (pcpu_info->cpu_up_rate % up_rate == 0);
 			check_down = (pcpu_info->cpu_down_rate % down_rate == 0);
 
+			/* for debug only
+			pr_info("CPU[%u], cur_freq[%u], cur_load[%u], rq_avg[%u], up_freq[%u], up_load[%u], up_rq[%u]\n",
+				cpu, cur_freq, cur_load, rq_avg, up_freq, up_load, up_rq);
+			*/
+
 			if (cpu > 0 
 				&& ((online_cpus - offline_cpu) > upmaxcoreslimit)) {
 					hotplug_onoff[cpu][DOWN_INDEX] = true;
@@ -275,6 +280,9 @@ static void __ref hotplug_work_fn(struct work_struct *work)
 				&& cur_freq >= up_freq 
 				&& rq_avg > up_rq) {
 					if (check_up) {
+#if 0
+						pr_info("CPU[%u], UPCPU[%u], cur_freq[%u], cur_load[%u], rq_avg[%u], up_rate[%u]\n", cpu, upcpu, cur_freq, cur_load, rq_avg, pcpu_info->cpu_up_rate);
+#endif
 						hotplug_onoff[upcpu][UP_INDEX] = true;
 						pcpu_info->cpu_up_rate = 1;
 						++online_cpu;
@@ -282,10 +290,13 @@ static void __ref hotplug_work_fn(struct work_struct *work)
 						++pcpu_info->cpu_up_rate;
 					}
 			} else if (cpu >= min_cpus_online
-					   && (cur_freq <= down_freq 
-						   || (cur_load < down_load
+					   && (cur_load < down_load
+						  || (cur_freq <= down_freq
 						       && rq_avg <= down_rq))) {
 							if (check_down) {
+#if 0
+								pr_info("CPU[%u], cur_freq[%u], cur_load[%u], rq_avg[%u], down_rate[%u]\n", cpu, cur_freq, cur_load, rq_avg, pcpu_info->cpu_down_rate);
+#endif
 								hotplug_onoff[cpu][DOWN_INDEX] = true;
 								pcpu_info->cpu_up_rate = 1;
 								pcpu_info->cpu_down_rate = 1;
@@ -293,6 +304,9 @@ static void __ref hotplug_work_fn(struct work_struct *work)
 							} else {
 								++pcpu_info->cpu_down_rate;
 							}
+			} else {
+				pcpu_info->cpu_up_rate = 1;
+				pcpu_info->cpu_down_rate = 1;
 			}
 		}
 	}
@@ -310,6 +324,9 @@ static void __ref hotplug_work_fn(struct work_struct *work)
 	delay = msecs_to_jiffies(hotplug_tuners_ins.hotplug_sampling_rate);
 
 	if (num_online_cpus() > 1) {
+#if 0
+		pr_info("NR_CPUS[%u], jiffies[%ld], delay[%u]\n", num_online_cpus(), jiffies, delay);
+#endif
 		delay -= jiffies % delay;
 	}
 

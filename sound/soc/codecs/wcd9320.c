@@ -2929,7 +2929,7 @@ static int taiko_codec_config_mad(struct snd_soc_codec *codec)
 		pr_err("Failed to acquire MAD firwmare data %s: %d\n", filename,
 		       ret);
 		ret = -ENODEV;
-		goto out;
+		goto relax;
 	}
 
 	if (fw->size < sizeof(struct mad_audio_cal)) {
@@ -3002,6 +3002,7 @@ static int taiko_codec_config_mad(struct snd_soc_codec *codec)
 
 out:
 	release_firmware(fw);
+relax:
 	__pm_relax(&taiko->mad_wakeup_source);
 
 	pr_debug("%s: leave ret %d\n", __func__, ret);
@@ -3539,6 +3540,7 @@ static int taiko_hphl_dac_event(struct snd_soc_dapm_widget *w,
 						 WCD9XXX_CLSH_EVENT_PRE_DAC);
 		} else {
 			wcd9xxx_enable_high_perf_mode(codec, &taiko_p->clsh_d,
+						WCD9XXX_NON_UHQA_MODE,
 						WCD9XXX_CLSAB_STATE_HPHL,
 						WCD9XXX_CLSAB_REQ_ENABLE);
 		}
@@ -3592,6 +3594,7 @@ static int taiko_hphr_dac_event(struct snd_soc_dapm_widget *w,
 						 WCD9XXX_CLSH_EVENT_PRE_DAC);
 		} else {
 			wcd9xxx_enable_high_perf_mode(codec, &taiko_p->clsh_d,
+						WCD9XXX_NON_UHQA_MODE,
 						WCD9XXX_CLSAB_STATE_HPHR,
 						WCD9XXX_CLSAB_REQ_ENABLE);
 		}
@@ -3778,6 +3781,7 @@ static int taiko_hph_pa_event(struct snd_soc_dapm_widget *w,
 						 WCD9XXX_CLSH_EVENT_POST_PA);
 		} else {
 			wcd9xxx_enable_high_perf_mode(codec, &taiko->clsh_d,
+						WCD9XXX_NON_UHQA_MODE,
 						req_clsab_state,
 						WCD9XXX_CLSAB_REQ_DISABLE);
 		}

@@ -122,7 +122,7 @@ static void param_set_mask(struct snd_pcm_hw_params *p, int n, unsigned bit)
 	}
 }
 
-static const char *const auxpcm_rate_text[] = {"rate_8000", "rate_16000"};
+static const char *const auxpcm_rate_text[] = {"8000", "16000"};
 static const struct soc_enum msm8974_auxpcm_enum[] = {
 		SOC_ENUM_SINGLE_EXT(2, auxpcm_rate_text),
 };
@@ -2386,7 +2386,7 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.codec_name = "snd-soc-dummy",
 		.be_id = MSM_FRONTEND_DAI_LSM1,
 	},
-#ifdef CONFIG_SND_FM_RADIO
+#if defined(CONFIG_SND_FM_RADIO) && !defined(CONFIG_MACH_MSM8974_G2_SPR)
     {
 		.name = "MI2S_TX Hostless",
 		.stream_name = "MI2S_TX Hostless",
@@ -2519,6 +2519,24 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.codec_dai_name = "snd-soc-dummy-dai",
 		.codec_name = "snd-soc-dummy",
 	},
+/* radio define for LS980 ZVE */
+#if defined(CONFIG_SND_FM_RADIO) && defined(CONFIG_MACH_MSM8974_G2_SPR)
+	{
+		.name = "MI2S_TX Hostless",
+		.stream_name = "MI2S_TX Hostless",
+		.cpu_dai_name   = "MI2S_TX_HOSTLESS",
+		.platform_name  = "msm-pcm-hostless",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+#endif
 	{
 		.name = "MSM8974 HFP TX",
 		.stream_name = "MultiMedia6",

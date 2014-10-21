@@ -72,7 +72,11 @@
 #define MTP_RESPONSE_OK             0x2001
 #define MTP_RESPONSE_DEVICE_BUSY    0x2019
 
+#ifdef CONFIG_USB_G_LGE_ANDROID
+unsigned int mtp_rx_req_len = 65536;
+#else
 unsigned int mtp_rx_req_len = MTP_BULK_BUFFER_SIZE;
+#endif
 module_param(mtp_rx_req_len, uint, S_IRUGO | S_IWUSR);
 
 unsigned int mtp_tx_req_len = MTP_BULK_BUFFER_SIZE;
@@ -924,8 +928,13 @@ static void receive_file_work(struct work_struct *data)
 			cur_buf = (cur_buf + 1) % RX_REQ_MAX;
 #endif
 
-			len = ALIGN(count, dev->ep_out->maxpacket);
-			if (len > mtp_rx_req_len)
+			/* The ALIGN macro may overflow if count is very large, so we only use it
+			 * if count <= mtp_rx_req_len.  This is safe because mtp_rx_req_len
+			 * should already be aligned.
+			 */
+			if (count <= mtp_rx_req_len)
+				len = ALIGN(count, dev->ep_out->maxpacket);
+			else
 				len = mtp_rx_req_len;
 			read_req->length = len;
 
