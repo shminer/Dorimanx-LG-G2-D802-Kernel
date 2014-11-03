@@ -747,9 +747,9 @@ struct signal_struct {
 	struct rw_semaphore group_rwsem;
 #endif
 
-	short oom_adj;		/* OOM kill score adjustment (bit shift) */
-	short oom_score_adj;	/* OOM kill score adjustment */
-	short oom_score_adj_min;	/* OOM kill score adjustment minimum value.
+	int oom_adj;		/* OOM kill score adjustment (bit shift) */
+	int oom_score_adj;	/* OOM kill score adjustment */
+	int oom_score_adj_min;	/* OOM kill score adjustment minimum value.
 				 * Only settable by CAP_SYS_RESOURCE. */
 
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
@@ -1216,8 +1216,8 @@ struct sched_dl_entity {
 
 	/*
 	 * Original scheduling parameters. Copied here from sched_attr
-	 * during sched_setscheduler2(), they will remain the same until
-	 * the next sched_setscheduler2().
+	 * during sched_setattr(), they will remain the same until
+	 * the next sched_setattr().
 	 */
 	u64 dl_runtime;		/* maximum runtime for each instance	*/
 	u64 dl_deadline;	/* relative deadline of each instance	*/
