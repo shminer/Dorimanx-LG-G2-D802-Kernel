@@ -474,6 +474,11 @@ extern int get_dumpable(struct mm_struct *mm);
 #define SUID_DUMP_USER		1	/* Dump as user of process */
 #define SUID_DUMP_ROOT		2	/* Dump as root */
 
+/* get/set_dumpable() values */
+#define SUID_DUMPABLE_DISABLED	0
+#define SUID_DUMPABLE_ENABLED	1
+#define SUID_DUMPABLE_SAFE	2
+
 /* mm flags */
 /* dumpable bits */
 #define MMF_DUMPABLE      0  /* core dump is permitted */
@@ -747,10 +752,10 @@ struct signal_struct {
 	struct rw_semaphore group_rwsem;
 #endif
 
-	int oom_adj;		/* OOM kill score adjustment (bit shift) */
-	int oom_score_adj;	/* OOM kill score adjustment */
-	int oom_score_adj_min;	/* OOM kill score adjustment minimum value.
-				 * Only settable by CAP_SYS_RESOURCE. */
+	int oom_adj;			/* OOM kill score adjustment (bit shift) */
+	short oom_score_adj;		/* OOM kill score adjustment */
+	short oom_score_adj_min;	/* OOM kill score adjustment min value.
+					 * Only settable by CAP_SYS_RESOURCE. */
 
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
 					 * credential calculations
@@ -1365,11 +1370,17 @@ struct task_struct {
 				 * execve */
 	unsigned in_iowait:1;
 
+
 	/* Revert to default priority/policy when forking */
 	unsigned sched_reset_on_fork:1;
 	unsigned sched_contributes_to_load:1;
 
 	unsigned long atomic_flags; /* Flags needing atomic access. */
+
+#ifdef CONFIG_GENERIC_HARDIRQS
+	/* IRQ handler threads */
+	unsigned irq_thread:1;
+#endif
 
 	pid_t pid;
 	pid_t tgid;
@@ -1798,29 +1809,6 @@ static inline void put_task_struct(struct task_struct *t)
 		__put_task_struct(t);
 }
 
-static inline cputime_t task_gtime(struct task_struct *t)
-{
-	return t->gtime;
-}
-
-static inline void task_cputime(struct task_struct *t,
-				cputime_t *utime, cputime_t *stime)
-{
-	if (utime)
-		*utime = t->utime;
-	if (stime)
-		*stime = t->stime;
-}
-
-static inline void task_cputime_scaled(struct task_struct *t,
-				       cputime_t *utimescaled,
-				       cputime_t *stimescaled)
-{
-	if (utimescaled)
-		*utimescaled = t->utimescaled;
-	if (stimescaled)
-		*stimescaled = t->stimescaled;
-}
 extern void task_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st);
 extern void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st);
 
@@ -1887,19 +1875,6 @@ extern unsigned long sched_get_busy(int cpu);
 /* NOTE: this will return 0 or PF_USED_MATH, it will never return 1 */
 #define tsk_used_math(p) ((p)->flags & PF_USED_MATH)
 #define used_math() tsk_used_math(current)
-
-/* Per-process atomic flags. */
-#define PFA_NO_NEW_PRIVS 0x00000001	/* May not gain new privileges. */
-
-static inline bool task_no_new_privs(struct task_struct *p)
-{
-	return test_bit(PFA_NO_NEW_PRIVS, &p->atomic_flags);
-}
-
-static inline void task_set_no_new_privs(struct task_struct *p)
-{
-	set_bit(PFA_NO_NEW_PRIVS, &p->atomic_flags);
-}
 
 /*
  * task->jobctl flags
