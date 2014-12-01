@@ -1531,6 +1531,30 @@ static int qseecom_send_cmd(struct qseecom_dev_handle *data, void __user *argp)
 	return ret;
 }
 
+int boundary_checks_offset(struct qseecom_send_modfd_cmd_req *cmd_req,
+			struct qseecom_send_modfd_listener_resp *lstnr_resp,
+			struct qseecom_dev_handle *data, bool listener_svc,
+			int i) {
+	int ret = 0;
+
+	if ((!listener_svc) && (cmd_req->ifd_data[i].fd > 0)) {
+		if (cmd_req->ifd_data[i].cmd_buf_offset >
+				cmd_req->cmd_req_len - sizeof(uint32_t)) {
+			pr_err("Invalid offset 0x%x\n",
+					cmd_req->ifd_data[i].cmd_buf_offset);
+			return ++ret;
+		}
+	} else if ((listener_svc) && (lstnr_resp->ifd_data[i].fd > 0)) {
+		if (lstnr_resp->ifd_data[i].cmd_buf_offset >
+				lstnr_resp->resp_len - sizeof(uint32_t)) {
+			pr_err("Invalid offset 0x%x\n",
+					lstnr_resp->ifd_data[i].cmd_buf_offset);
+			return ++ret;
+		}
+	}
+	return ret;
+}
+
 static int __qseecom_update_cmd_buf(void *msg, bool cleanup,
 					struct qseecom_dev_handle *data,
 					bool listener_svc)
@@ -1604,6 +1628,10 @@ static int __qseecom_update_cmd_buf(void *msg, bool cleanup,
 		if (sg_ptr->nents == 1) {
 			uint32_t *update;
 			update = (uint32_t *) field;
+
+			if (boundary_checks_offset(cmd_req, lstnr_resp, data,
+							listener_svc, i))
+				goto err;
 			if (cleanup)
 				*update = 0;
 			else
@@ -1613,6 +1641,27 @@ static int __qseecom_update_cmd_buf(void *msg, bool cleanup,
 		} else {
 			struct qseecom_sg_entry *update;
 			int j = 0;
+
+			if ((!listener_svc) && (cmd_req->ifd_data[i].fd > 0)) {
+				if (cmd_req->ifd_data[i].cmd_buf_offset >
+					cmd_req->cmd_req_len -
+					sizeof(struct qseecom_sg_entry)) {
+					pr_err("Invalid offset = 0x%x\n",
+						cmd_req->ifd_data[i].
+						cmd_buf_offset);
+					goto err;
+				}
+			} else if ((listener_svc) &&
+					(lstnr_resp->ifd_data[i].fd > 0)) {
+				if (lstnr_resp->ifd_data[i].cmd_buf_offset >
+							lstnr_resp->resp_len -
+					sizeof(struct qseecom_sg_entry)) {
+					pr_err("Invalid offset = 0x%x\n",
+						lstnr_resp->ifd_data[i].
+							cmd_buf_offset);
+					goto err;
+				}
+			}
 			update = (struct qseecom_sg_entry *) field;
 			for (j = 0; j < sg_ptr->nents; j++) {
 				if (cleanup) {
@@ -4531,8 +4580,7 @@ static int qseecom_suspend(struct platform_device *pdev, pm_message_t state)
 	mutex_lock(&qsee_bw_mutex);
 	mutex_lock(&clk_access_lock);
 
-	if (qseecom.cumulative_mode != INACTIVE &&
-		qseecom.current_mode != INACTIVE) {
+	if (qseecom.current_mode != INACTIVE) {
 		ret = msm_bus_scale_client_update_request(
 			qseecom.qsee_perf_client, INACTIVE);
 		if (ret)
