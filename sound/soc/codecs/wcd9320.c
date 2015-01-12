@@ -4690,7 +4690,7 @@ static int taiko_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 	if (taiko_is_digital_gain_register(reg))
 		return 1;
 
-#ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
+#if defined(CONFIG_SOUND_CONTROL_HAX_3_GPL) && !defined(CONFIG_MACH_LGE)
 	/* HPH gain registers */
 	if (reg == TAIKO_A_RX_HPH_L_GAIN || reg == TAIKO_A_RX_HPH_R_GAIN)
 		return 1;
@@ -5979,6 +5979,24 @@ static int taiko_codec_enable_anc_ear(struct snd_soc_dapm_widget *w,
 	return ret;
 }
 
+static int taiko_codec_set_iir_gain(struct snd_soc_dapm_widget *w,
+	struct snd_kcontrol *kcontrol, int event)
+{
+	struct snd_soc_codec *codec = w->codec;
+	int value = 0;
+
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		value = snd_soc_read(codec, TAIKO_A_CDC_IIR1_GAIN_B1_CTL);
+		snd_soc_write(codec, TAIKO_A_CDC_IIR1_GAIN_B1_CTL, value);
+		break;
+	default:
+		pr_info("%s: event = %d not expected\n", __func__, event);
+		break;
+	}
+	return 0;
+}
+
 /* Todo: Have seperate dapm widgets for I2S and Slimbus.
  * Might Need to have callbacks registered only for slimbus
  */
@@ -6428,6 +6446,9 @@ static const struct snd_soc_dapm_widget taiko_dapm_widgets[] = {
 		&iir1_inp1_mux,  taiko_codec_iir_mux_event,
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
 
+	SND_SOC_DAPM_PGA_E("IIR1", TAIKO_A_CDC_CLK_SD_CTL, 0, 0, NULL, 0,
+		taiko_codec_set_iir_gain, SND_SOC_DAPM_POST_PMU),
+
 	SND_SOC_DAPM_MUX_E("IIR1 INP2 MUX", TAIKO_A_CDC_IIR1_GAIN_B2_CTL, 0, 0,
 		&iir1_inp2_mux,  taiko_codec_iir_mux_event,
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
@@ -6440,7 +6461,6 @@ static const struct snd_soc_dapm_widget taiko_dapm_widgets[] = {
 		&iir1_inp4_mux,  taiko_codec_iir_mux_event,
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
 
-	SND_SOC_DAPM_MIXER("IIR1", TAIKO_A_CDC_CLK_SD_CTL, 0, 0, NULL, 0),
 
 	SND_SOC_DAPM_MUX_E("IIR2 INP1 MUX", TAIKO_A_CDC_IIR2_GAIN_B1_CTL, 0, 0,
 		&iir2_inp1_mux,  taiko_codec_iir_mux_event,
