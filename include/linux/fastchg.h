@@ -21,6 +21,7 @@
 extern int force_fast_charge;
 extern int force_fast_charge_temp;
 extern int fast_charge_level;
+extern int fake_charge_ac;
 extern int usb_power_curr_now;
 extern int force_fast_charge_on_off;
 
@@ -35,5 +36,8 @@ extern int force_fast_charge_on_off;
 #define FAST_CHARGE_1600	1600
 
 #define FAST_CHARGE_LEVELS	"300 500 900 1200 1600"
+
+#define FAKE_CHARGE_AC_DISABLE	0
+#define FAKE_CHARGE_AC_ENABLE	1
 
 #endif
