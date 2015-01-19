@@ -664,7 +664,7 @@ static int dwc3_otg_set_power(struct usb_phy *phy, unsigned mA)
 		dotg->psy = power_supply_get_by_name("ac");
 	} else {
 		pr_info("msm_otg_notify_power_supply: "
-				"power_supply_get_by_name(usb)\n");
+				"power_supply_get_by_name(usb-pm)\n");
 		dotg->psy = power_supply_get_by_name("usb");
 	}
 	if (!dotg->psy)
