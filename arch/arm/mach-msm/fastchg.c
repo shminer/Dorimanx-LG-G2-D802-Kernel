@@ -48,6 +48,7 @@
  * version 2.2 allow to charge on 900ma lock.
  * version 2.3 added more checks to thermal mitigation functions and corrected code style.
  * removed updating charging scenario when no charger connected. no point to do so.
+ * version 2.4 allowed full 2000ma to be set in charger driver.
  */
 
 #define FAST_CHARGE_VERSION	"Version 2.3"
