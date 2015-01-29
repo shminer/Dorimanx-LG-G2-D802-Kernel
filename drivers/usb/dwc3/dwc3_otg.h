@@ -27,6 +27,7 @@
 #endif
 
 #define DWC3_IDEV_CHG_MAX 1800
+#define DWC3_IDEV_CHG_MIN 500
 
 struct dwc3_charger;
 
@@ -85,7 +86,7 @@ enum dwc3_chg_type {
 
 struct dwc3_charger {
 	enum dwc3_chg_type	chg_type;
-	unsigned		max_power;
+	int			max_power;
 	bool			charging_disabled;
 
 	bool			skip_chg_detect;

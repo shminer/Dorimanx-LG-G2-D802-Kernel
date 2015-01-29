@@ -3681,6 +3681,8 @@ static int __devinit dwc3_msm_probe(struct platform_device *pdev)
 	/* usb_psy required only for vbus_notifications or charging support */
 	if (mdwc->ext_xceiv.otg_capability ||
 			!mdwc->charger.charging_disabled) {
+		mdwc->current_max = DWC3_IDEV_CHG_MIN * 1000;
+		mdwc->charger.max_power = -EINVAL;
 		mdwc->usb_psy.name = "usb";
 		mdwc->usb_psy.type = POWER_SUPPLY_TYPE_USB;
 		mdwc->usb_psy.supplied_to = dwc3_msm_pm_power_supplied_to;
@@ -3907,7 +3909,6 @@ static int dwc3_msm_pm_resume(struct device *dev)
 
 	dev_dbg(dev, "dwc3-msm PM resume\n");
 
-	atomic_set(&mdwc->pm_suspended, 0);
 	if (mdwc->resume_pending) {
 		mdwc->resume_pending = false;
 
@@ -3927,6 +3928,8 @@ static int dwc3_msm_pm_resume(struct device *dev)
 							DWC3_EVENT_XCEIV_STATE);
 		}
 	}
+
+	atomic_set(&mdwc->pm_suspended, 0);
 
 	return ret;
 }

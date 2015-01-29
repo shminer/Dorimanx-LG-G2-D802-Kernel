@@ -597,7 +597,7 @@ static int dwc3_otg_set_power(struct usb_phy *phy, unsigned mA)
 			dotg->charger->chg_type == DWC3_PROPRIETARY_CHARGER)
 		power_supply_type = POWER_SUPPLY_TYPE_USB_DCP;
 	else
-		power_supply_type = POWER_SUPPLY_TYPE_UNKNOWN;
+		power_supply_type = POWER_SUPPLY_TYPE_USB;
 
 	power_supply_set_supply_type(dotg->psy, power_supply_type);
 
@@ -695,7 +695,7 @@ static int dwc3_otg_set_power(struct usb_phy *phy, unsigned mA)
 			dotg->psy = power_supply_get_by_name("ac");
 		}
 #endif
-	} else if (dotg->charger->max_power > 0 && (mA == 0 || mA == 2)) {
+	} else if (mA == 0 || mA == 2) {
 		/* Disable charging */
 		if (power_supply_set_online(dotg->psy, false))
 			goto psy_error;
@@ -959,9 +959,10 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 						dwc3_otg_set_power(phy,
 							DWC3_IDEV_CHG_MAX);
 					else
-						dwc3_otg_set_power(phy, IUNIT);
+						dwc3_otg_set_power(phy,
+								DWC3_IDEV_CHG_MIN);
 #else
-					dwc3_otg_set_power(phy, IUNIT);
+					dwc3_otg_set_power(phy, DWC3_IDEV_CHG_MIN);
 #endif
 
 #ifdef CONFIG_LGE_PM
