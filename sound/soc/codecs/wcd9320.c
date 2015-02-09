@@ -56,7 +56,7 @@
 #define TAIKO_VALIDATE_RX_SBPORT_RANGE(port) ((port >= 16) && (port <= 22))
 #define TAIKO_CONVERT_RX_SBPORT_ID(port) (port - 16) /* RX1 port ID = 0 */
 
-#define TAIKO_HPH_PA_SETTLE_COMP_ON 3000
+#define TAIKO_HPH_PA_SETTLE_COMP_ON 5000
 #define TAIKO_HPH_PA_SETTLE_COMP_OFF 13000
 
 #define DAPM_MICBIAS2_EXTERNAL_STANDALONE "MIC BIAS2 External Standalone"
@@ -4685,10 +4685,13 @@ static int taiko_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 	if (taiko_is_digital_gain_register(reg))
 		return 1;
 
-#if defined(CONFIG_SOUND_CONTROL_HAX_3_GPL) && !defined(CONFIG_MACH_LGE)
+#if defined(CONFIG_SOUND_CONTROL_HAX_3_GPL) && defined(CONFIG_MACH_LGE)
 	/* HPH gain registers */
-	if (reg == TAIKO_A_RX_HPH_L_GAIN || reg == TAIKO_A_RX_HPH_R_GAIN)
-		return 1;
+	if (lge_snd_pa_ctrl_locked) {
+		if (reg == TAIKO_A_RX_HPH_L_GAIN ||
+				reg == TAIKO_A_RX_HPH_R_GAIN)
+			return 1;
+	}
 #endif
 
 	/* HPH status registers */
